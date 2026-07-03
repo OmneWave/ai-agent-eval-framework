@@ -1,0 +1,151 @@
+{
+  "trace_id": "test-trace-001",
+  "session_id": "proj:session-1",
+  "run_id": "run-abc123",
+  "entry_agent": "wm_agent",
+  "status": "success",
+  "duration_ms": 45000,
+  "user_prompt": "Bind the form on UserPage to UserService",
+  "final_response": "Form bound successfully.",
+  "metadata": {
+    "entryagentid": "wm_agent",
+    "projectid": "test-project",
+    "contract_id": "ui_to_api_binding@1.0.0"
+  },
+  "custom_events": [],
+  "skill_loads": [
+    {
+      "skill_names": ["ui_to_api_binding_workflow"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:00Z",
+      "agent_id": "wm_agent",
+      "error_message": null
+    }
+  ],
+  "tools_summary": {
+    "called": [
+      "load_skill",
+      "start_new_conversation_with_agent",
+      "read_files",
+      "start_new_conversation_with_agent",
+      "ui_createApiAwareVariable",
+      "edit_file_content"
+    ],
+    "success": [
+      "load_skill",
+      "start_new_conversation_with_agent",
+      "read_files",
+      "start_new_conversation_with_agent",
+      "ui_createApiAwareVariable",
+      "edit_file_content"
+    ],
+    "failed": []
+  },
+  "spans": [
+    {
+      "id": "test-trace-001",
+      "name": "wm_agent",
+      "type": "AGENT_RUN",
+      "parent_id": null,
+      "agent_id": "wm_agent",
+      "timestamp": "2026-01-01T10:00:00Z",
+      "end_time": null,
+      "level": null,
+      "input": null,
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-load-skill",
+      "name": "load_skill",
+      "type": "TOOL",
+      "parent_id": "test-trace-001",
+      "agent_id": "wm_agent",
+      "timestamp": "2026-01-01T10:00:01Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"skills": ["ui_to_api_binding_workflow"]},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-deleg-backend",
+      "name": "start_new_conversation_with_agent",
+      "type": "TOOL",
+      "parent_id": "test-trace-001",
+      "agent_id": "wm_agent",
+      "timestamp": "2026-01-01T10:00:04Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"target_agent": "wm_backend_expert", "task": "Explore APIs"},
+      "output": {"status": "success"},
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-read-files",
+      "name": "read_files",
+      "type": "TOOL",
+      "parent_id": "span-deleg-backend",
+      "agent_id": "wm_backend_expert",
+      "timestamp": "2026-01-01T10:00:05Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"paths": ["services/UserService/designtime/UserService_API_REST_SERVICE.json"]},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-deleg-ui",
+      "name": "start_new_conversation_with_agent",
+      "type": "TOOL",
+      "parent_id": "test-trace-001",
+      "agent_id": "wm_agent",
+      "timestamp": "2026-01-01T10:00:09Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"target_agent": "wm_ui_expert", "task": "Bind UI"},
+      "output": {"status": "success"},
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-create-var",
+      "name": "ui_createApiAwareVariable",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:10Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"path": "src/main/webapp/pages/UserPage/UserPage.variables.json"},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-edit-html",
+      "name": "edit_file_content",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:15Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"path": "src/main/webapp/pages/UserPage/UserPage.html"},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    }
+  ]
+}

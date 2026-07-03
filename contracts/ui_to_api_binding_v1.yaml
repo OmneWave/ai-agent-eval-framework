@@ -1,0 +1,116 @@
+workflow: ui_to_api_binding
+contract_version: "1.0.0"
+
+intent:
+  expected_skill: ui_to_api_binding_workflow
+
+required_metadata:
+  - entryagentid
+
+resources:
+  apiservice:
+    agent: wm_backend_expert
+    skip_if: null
+    operation: READ
+    context:
+      - serviceId
+      - operationId
+    tools:
+      required:
+        - read_files
+      allowed:
+        - platform_getServiceDetails
+        - platform_getDefinitionInformation
+      forbidden:
+        - delete_file
+    files:
+      - path: services/{serviceId}/designtime/{serviceId}_API_REST_SERVICE.json
+        mutability: read_only
+
+  variable:
+    agent: wm_ui_expert
+    skip_if: null
+    operation: CREATE
+    context:
+      - serviceId
+      - operationId
+    tools:
+      required:
+        - ui_createApiAwareVariable
+      forbidden:
+        - delete_file
+        - edit_file_content
+    files:
+      - path: src/main/webapp/pages/{page}/{page}.variables.json
+        mutability: tool_managed
+
+  widget:
+    agent: wm_ui_expert
+    skip_if: null
+    operation: UPDATE
+    context:
+      - widgetName
+    tools:
+      required:
+        - edit_file_content
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/{page}/{page}.html
+        mutability: editable
+
+  javascript:
+    agent: wm_ui_expert
+    skip_if: "true"
+    operation: null
+    context: []
+    tools:
+      required: []
+      allowed: []
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/{page}/{page}.js
+        mutability: editable
+
+  javaservice:
+    agent: wm_backend_expert
+    skip_if: "task.backend_source != java_service"
+    operation: CREATE
+    context:
+      - className
+    tools:
+      required:
+        - platform_compile
+      allowed: []
+      forbidden: []
+    files:
+      - path: services/{serviceId}/src/**/*.java
+        mutability: editable
+
+  dbservice:
+    agent: wm_backend_expert
+    skip_if: "task.backend_source != java_service"
+    operation: READ
+    context: []
+    tools:
+      required: []
+      allowed: []
+      forbidden: []
+    files:
+      - path: services/{serviceId}/designtime/**
+        mutability: read_only
+
+blocking_checks:
+  - trace_complete
+  - planning_coverage_satisfied
+  - planning_order_satisfied
+  - all_resources_passed
+  - diagnostics_clean
+  - build_passed
+  - no_unrelated_diff
+
+slo:
+  valid_task_completion_rate: 0.95
+  max_blocking_failure_rate: 0.02
+  max_policy_violation_rate: 0.00
