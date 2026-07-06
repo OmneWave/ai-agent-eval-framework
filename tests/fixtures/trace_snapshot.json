@@ -13,12 +13,67 @@
     "contract_id": "ui_to_api_binding@1.0.0"
   },
   "custom_events": [],
+  "generations": [
+    {
+      "name": "wm_backend_expert",
+      "agent_id": "wm_backend_expert",
+      "timestamp": "2026-01-01T10:00:04Z",
+      "input_tokens": 1200,
+      "output_tokens": 300,
+      "total_tokens": 1500,
+      "cost_usd": 0.012
+    },
+    {
+      "name": "wm_ui_expert",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:09Z",
+      "input_tokens": 2000,
+      "output_tokens": 500,
+      "total_tokens": 2500,
+      "cost_usd": 0.018
+    }
+  ],
   "skill_loads": [
     {
       "skill_names": ["ui_to_api_binding_workflow"],
       "success": true,
       "timestamp": "2026-01-01T10:00:00Z",
       "agent_id": "wm_agent",
+      "error_message": null
+    },
+    {
+      "skill_names": ["explore-codebase"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:02Z",
+      "agent_id": "wm_backend_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["explore-api"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:03Z",
+      "agent_id": "wm_backend_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["variables"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:08Z",
+      "agent_id": "wm_ui_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["actions"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:09Z",
+      "agent_id": "wm_ui_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["markup"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:12Z",
+      "agent_id": "wm_ui_expert",
       "error_message": null
     }
   ],
@@ -28,16 +83,16 @@
       "start_new_conversation_with_agent",
       "read_files",
       "start_new_conversation_with_agent",
-      "ui_createApiAwareVariable",
-      "edit_file_content"
+      "execute_tool",
+      "write_file"
     ],
     "success": [
       "load_skill",
       "start_new_conversation_with_agent",
       "read_files",
       "start_new_conversation_with_agent",
-      "ui_createApiAwareVariable",
-      "edit_file_content"
+      "execute_tool",
+      "write_file"
     ],
     "failed": []
   },
@@ -96,7 +151,10 @@
       "timestamp": "2026-01-01T10:00:05Z",
       "end_time": null,
       "level": "DEFAULT",
-      "input": {"paths": ["services/UserService/designtime/UserService_API_REST_SERVICE.json"]},
+      "input": {
+        "paths": ["services/petstore/designtime/petstore_API_REST_SERVICE.json"],
+        "operationId": "petstore_findPetsByTags"
+      },
       "output": null,
       "success": true,
       "error_message": null,
@@ -119,14 +177,19 @@
     },
     {
       "id": "span-create-var",
-      "name": "ui_createApiAwareVariable",
+      "name": "execute_tool",
       "type": "TOOL",
       "parent_id": "span-deleg-ui",
       "agent_id": "wm_ui_expert",
       "timestamp": "2026-01-01T10:00:10Z",
       "end_time": null,
       "level": "DEFAULT",
-      "input": {"path": "src/main/webapp/pages/UserPage/UserPage.variables.json"},
+      "input": {
+        "tool": "ui_createApiAwareVariable",
+        "path": "src/main/webapp/pages/PetTable/PetTable.variables.json",
+        "service": "petstore",
+        "operationId": "petstore_findPetsByTags"
+      },
       "output": null,
       "success": true,
       "error_message": null,
@@ -134,14 +197,18 @@
     },
     {
       "id": "span-edit-html",
-      "name": "edit_file_content",
+      "name": "write_file",
       "type": "TOOL",
       "parent_id": "span-deleg-ui",
       "agent_id": "wm_ui_expert",
       "timestamp": "2026-01-01T10:00:15Z",
       "end_time": null,
       "level": "DEFAULT",
-      "input": {"path": "src/main/webapp/pages/UserPage/UserPage.html"},
+      "input": {
+        "path": "src/main/webapp/pages/PetTable/PetTable.html",
+        "widgetName": "PetTable",
+        "variableName": "swagger_findPetsByTagsTable1"
+      },
       "output": null,
       "success": true,
       "error_message": null,

@@ -217,6 +217,55 @@ def fetch_via_sdk(trace_id: str) -> tuple[dict[str, Any] | None, list[dict[str, 
     return trace, observations
 
 
+def list_trace_ids_in_range(
+    from_timestamp: str,
+    to_timestamp: str,
+    *,
+    user_id: str | None = None,
+    limit: int = 50,
+) -> list[str]:
+    """Discover trace IDs via Langfuse's paginated `GET /api/public/traces`.
+
+    Uses the stable public REST endpoint directly (rather than an SDK method)
+    since its query params (`fromTimestamp`, `toTimestamp`, `userId`, `page`,
+    `limit`) are part of Langfuse's documented public API contract.
+    """
+    base = os.environ["LANGFUSE_BASE_URL"].rstrip("/")
+    headers = _auth_header()
+    page_size = min(max(limit, 1), OBSERVATION_PAGE_SIZE)
+    params: dict[str, Any] = {
+        "fromTimestamp": from_timestamp,
+        "toTimestamp": to_timestamp,
+        "limit": page_size,
+        "page": 1,
+    }
+    if user_id:
+        params["userId"] = user_id
+
+    trace_ids: list[str] = []
+    with httpx.Client(timeout=30.0) as client:
+        for _ in range(MAX_OBSERVATION_PAGES):
+            if len(trace_ids) >= limit:
+                break
+            response = client.get(f"{base}/api/public/traces", headers=headers, params=params)
+            response.raise_for_status()
+            body = response.json()
+            batch = body.get("data") if isinstance(body, dict) else None
+            if not batch:
+                break
+            for item in batch:
+                trace_id = item.get("id") if isinstance(item, dict) else None
+                if trace_id:
+                    trace_ids.append(trace_id)
+                if len(trace_ids) >= limit:
+                    break
+            if len(batch) < page_size:
+                break
+            params["page"] = int(params["page"]) + 1
+
+    return trace_ids[:limit]
+
+
 def fetch_trace(
     trace_id: str,
     retries: int = 12,

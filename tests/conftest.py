@@ -19,7 +19,7 @@ def snapshot() -> TraceSnapshot:
 
 @pytest.fixture
 def contract():
-    return load_contract(CONTRACTS / "ui_to_api_binding_v1.yaml")
+    return load_contract(CONTRACTS / "binding" / "binding_with_widget.yaml")
 
 
 @pytest.fixture

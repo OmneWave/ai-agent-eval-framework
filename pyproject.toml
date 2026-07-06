@@ -22,6 +22,7 @@ dev = [
 fetch-trace = "wm_agents_validator.cli.fetch_trace:main"
 debug-trace = "wm_agents_validator.cli.debug_trace:main"
 run-verify = "wm_agents_validator.cli.run_verify:main"
+compare-traces = "wm_agents_validator.cli.compare_traces:main"
 
 [build-system]
 requires = ["hatchling"]
