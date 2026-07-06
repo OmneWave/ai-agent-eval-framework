@@ -86,8 +86,8 @@ A simple benchmark can be structured as follows:
 | Use case | Contract | Sonnet4.6 | GLM-5 40B | Ornith-1.0-35B |
 |---|---|---:|---:|---:|
 | UI-to-API binding | contract A | 0.86 | 0.91 | 0.83 |
-| Screenshot2Code workflow | contract B | 0.78 | 0.84 | 0.80 |
-| Java Service Orchestration | contract C | 0.72 | 0.12 | 0.68 |
+| Screenshot2Code workflow | contract B | 0.72 | 0.12 | 0.68 |
+| JavaService Orchestration | contract C | 0.78 | 0.84 | 0.80 |
 
 From this, you can identify which model is strongest in which scenario and where one model is more robust than another.
 
