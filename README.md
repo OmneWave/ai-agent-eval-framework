@@ -1,8 +1,109 @@
-# wm_agents_validator
+# Cross-Model Benchmarking with the Evaluation Engine
 
-Validate WaveMaker agent runs by fetching Langfuse traces, normalizing them into a `TraceSnapshot`, and evaluating them against `WorkflowContract` YAML specs using pluggable deterministic plugins.
+## Overview
 
-No golden dataset. No LLM judge.
+This framework is a deterministic evaluation system for agent runs. It takes a trace from an LLM-driven workflow, evaluates it against a contract defined for a specific use case, and produces a score along with detailed pass/fail evidence. Instead of relying on an LLM judge or a manually curated golden dataset, it uses structured rules and plugin-based checks to judge whether a run satisfies the expected behavior.
+
+## What the framework does
+
+The evaluation engine works in four stages:
+
+1. Contract definition
+   - A workflow contract is defined in YAML for a specific use case.
+   - The contract describes the intended behavior, required metadata, expected skills, required tools, file scope, and blocking conditions.
+
+2. Trace ingestion
+   - The system fetches a trace or loads a saved snapshot.
+   - The trace is normalized into a structured representation that captures skills, tools, file changes, agents, errors, and status.
+
+3. Plugin-based evaluation
+   - Multiple plugins inspect different aspects of the run:
+     - metadata gate
+     - intent verification
+     - resource coverage
+     - tool policy
+     - file mutability
+     - trace health
+     - blocking checks
+   - Each plugin returns a score, pass/fail result, and evidence.
+
+4. Aggregated reporting
+   - The framework combines plugin outputs into an overall score.
+   - It also produces a verification report showing which checks passed, failed, and why.
+
+## Why this is useful
+
+This makes the framework well suited for evaluating whether an agent behaved correctly for a given task. It is especially useful when the same workflow needs to be tested repeatedly across different prompts, agents, or models.
+
+The key advantage is that the evaluation is structured and repeatable. The same contract can be applied to multiple traces, and the framework will judge each one under the same rules.
+
+## How it can be used as a Cross-Model Benchmarking Framework
+
+A cross-model benchmark compares the same use case across different models by running the same evaluation contract against each model’s trace output.
+
+### Benchmarking workflow
+
+1. Define a contract for each use case
+   - Example: UI-to-API binding, file-edit workflow, agent handoff workflow, or multi-step planning task.
+
+2. Collect traces from each model
+   - Run the same task using Model A, Model B, and Model C.
+   - Capture the trace for each run.
+
+3. Evaluate each trace with the same contract
+   - Apply the same workflow contract to each trace.
+   - This ensures fairness because every model is judged using identical criteria.
+
+4. Compare scores and plugin results
+   - Compare overall scores, pass/fail status, and plugin-level breakdowns.
+   - This shows not just whether a model passed, but where it performed well or poorly.
+
+5. Rank models per use case and overall
+   - A model may excel in tool usage but struggle with planning coverage.
+   - This makes the benchmark more informative than a single overall score.
+
+## What makes it a strong benchmark
+
+This framework is suitable for cross-model benchmarking because it provides:
+
+- consistent evaluation criteria
+- contract-driven checks for each use case
+- score breakdowns by plugin
+- evidence-backed results rather than subjective opinions
+- repeatability across many runs
+
+It is especially valuable when you want to answer questions like:
+
+- Which model best satisfies the contract for a given workflow?
+- Which model is more reliable on tool usage?
+- Which model has better agent coverage and planning behavior?
+- Which model produces fewer trace-level errors?
+
+## Example benchmarking approach
+
+A simple benchmark can be structured as follows:
+
+| Use case | Contract | Sonnet4.6 | GLM-5 40B | Ornith-1.0-35B |
+|---|---|---:|---:|---:|
+| UI-to-API binding | contract A | 0.86 | 0.91 | 0.83 |
+| Screenshot2Code workflow | contract B | 0.78 | 0.84 | 0.80 |
+| Java Service Orchestration | contract C | 0.72 | 0.12 | 0.68 |
+
+From this, you can identify which model is strongest in which scenario and where one model is more robust than another.
+
+## Best practice for using it as a benchmark
+
+To make the framework effective for cross-model comparison:
+
+- Use the same contract for all models in a given test case.
+- Keep the task prompt and environment consistent.
+- Capture enough trace detail to support all plugins.
+- Compare both overall scores and plugin-level diagnostics.
+- Track results over time to observe improvements or regressions.
+
+## Summary
+
+This evaluation engine is not just a validator; it is a structured benchmarking framework. By applying contract-driven evaluation to traces from different models, it enables fair, repeatable, and evidence-based comparison of model performance across real workflows.
 
 ## Setup
 
