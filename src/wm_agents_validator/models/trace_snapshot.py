@@ -76,6 +76,18 @@ class SpanRecord(BaseModel):
     error_message: str | None = None
 
 
+class GenerationRecord(BaseModel):
+    """A single LLM call (Langfuse GENERATION observation) with its usage/cost."""
+
+    name: str | None = None
+    agent_id: str | None = None
+    timestamp: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cost_usd: float | None = None
+
+
 class FailedToolRecord(BaseModel):
     name: str
     error_message: str | None = None
@@ -102,10 +114,26 @@ class TraceSnapshot(BaseModel):
     skill_loads: list[SkillLoadRecord] = Field(default_factory=list)
     tools_summary: ToolsSummary = Field(default_factory=ToolsSummary)
     spans: list[SpanRecord] = Field(default_factory=list)
+    generations: list[GenerationRecord] = Field(default_factory=list)
+    trace_total_cost_usd: float | None = None
+    """Langfuse's own pre-aggregated ``totalCost`` for the trace, used as a
+    fallback when per-generation cost data wasn't available/fetched."""
 
     @property
     def tool_names(self) -> list[str]:
         return list(self.tools_summary.called)
+
+    @property
+    def total_tokens(self) -> int | None:
+        values = [g.total_tokens for g in self.generations if g.total_tokens is not None]
+        return sum(values) if values else None
+
+    @property
+    def total_cost_usd(self) -> float | None:
+        values = [g.cost_usd for g in self.generations if g.cost_usd is not None]
+        if values:
+            return sum(values)
+        return self.trace_total_cost_usd
 
     @property
     def errors(self) -> list[ErrorRecord]:
@@ -164,7 +192,7 @@ class TraceSnapshot(BaseModel):
             if base_name not in FILE_WRITE_TOOLS:
                 continue
             operation = "delete" if "delete" in base_name else "edit" if "edit" in base_name else "write"
-            for path in _extract_paths_from_input(span.input or {}):
+            for path in extract_paths_from_input(span.input or {}, base_name):
                 changes.append(
                     FileChangeRecord(path=path, operation=operation, tool_name=base_name)
                 )
@@ -199,15 +227,57 @@ def _delegation_target(span: SpanRecord) -> str | None:
     return str(target) if target else None
 
 
-def _extract_paths_from_input(tool_input: dict[str, Any]) -> list[str]:
-    paths: list[str] = []
+# Path-bearing argument name(s) per tool, taken directly from each tool's
+# @tool-decorated signature in wm-agent-server's src/tools.py, so path
+# extraction matches the real schema instead of guessing at key names.
+# MCP-provided tools (invoked via execute_tool's tool_args) aren't defined in
+# that repo and aren't listed here; they fall back to the generic heuristic.
+_TOOL_PATH_FIELDS: dict[str, tuple[str, ...]] = {
+    "read_files": ("file_paths",),  # list[str]
+    "write_file": ("file_path",),
+    "edit_file_content": ("file_path",),
+    "delete_file": ("file_path",),
+    "get_file_diagnostics": ("file_path",),
+    "get_file_patch_for_checkpoints": ("file_path",),
+    "find_files_by_glob": ("folder_path",),
+    "grep_in_files": ("path",),
+    "vcs_file_updated": ("file_path",),
+}
+
+
+def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None = None) -> list[str]:
+    fields = _TOOL_PATH_FIELDS.get(tool_name) if tool_name else None
+    if fields:
+        paths: list[str] = []
+        for key in fields:
+            value = tool_input.get(key)
+            if value is None:
+                continue
+            if isinstance(value, list):
+                paths.extend(str(v) for v in value)
+            else:
+                paths.append(str(value))
+        if paths:
+            return paths
+
+    # Fallback heuristic for tools with no known schema entry above (e.g.
+    # MCP/platform tools reached through execute_tool, or unrecognized names).
+    paths = []
     for key in ("path", "file_path", "file"):
         value = tool_input.get(key)
         if value:
             paths.append(str(value))
-    files = tool_input.get("paths") or tool_input.get("files") or []
+    files = (
+        tool_input.get("paths")
+        or tool_input.get("files")
+        or tool_input.get("file_paths")
+        or tool_input.get("folder_path")
+        or []
+    )
     if isinstance(files, list):
         paths.extend(str(path) for path in files)
+    elif files:
+        paths.append(str(files))
     change = tool_input.get("change")
     if isinstance(change, str):
         match = re.search(r"([\w./-]+\.(?:html|json|js|css|xml))", change)

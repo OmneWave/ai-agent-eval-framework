@@ -19,6 +19,22 @@ class EvalContext(BaseModel):
 
 
 class PluginResult(BaseModel):
+    """``violations`` only ever reflects what went *wrong*; a plugin that
+    checks several named things (e.g. one entry per contract resource, or one
+    per budgeted metric) and wants that full breakdown surfaced -- including
+    the things that passed -- should additionally populate a standard
+    ``evidence["checks"]`` map:
+
+        evidence["checks"] = {
+            "<label>": {"passed": bool, "detail": "<human-readable reason>"},
+            ...
+        }
+
+    Renderers (console, HTML) read this generic shape to show "what was
+    validated" regardless of pass/fail, without needing to know anything
+    plugin-specific about the rest of ``evidence``.
+    """
+
     plugin: str
     passed: bool
     score: float

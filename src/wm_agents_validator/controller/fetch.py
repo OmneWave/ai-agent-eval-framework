@@ -5,6 +5,7 @@ from typing import Any
 
 from wm_agents_validator.models.raw_trace import RawTracePayload
 from wm_agents_validator.models.trace_snapshot import TraceSnapshot
+from wm_agents_validator.report.colors import green, red, yellow
 from wm_agents_validator.trace.fetcher import fetch_trace
 from wm_agents_validator.trace.normalizer import normalize_trace
 
@@ -58,7 +59,8 @@ def print_fetch_report(result: FetchResult) -> None:
     print(f"trace_id:     {snapshot.trace_id}")
     print(f"session_id:   {snapshot.session_id}")
     print(f"entry_agent:  {snapshot.entry_agent}")
-    print(f"status:       {snapshot.status}")
+    status_color = {"success": green, "error": red}.get(snapshot.status, yellow)
+    print(f"status:       {status_color(snapshot.status)}")
     prompt = snapshot.user_prompt or ""
     print(f"user_prompt:  {prompt[:80]}{'...' if len(prompt) > 80 else ''}")
     print(f"skills:       {summary['skills']}")

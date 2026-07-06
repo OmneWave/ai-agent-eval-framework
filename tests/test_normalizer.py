@@ -14,7 +14,7 @@ FULL_RAW_TRACE = Path(__file__).parent.parent / "trace-artifacts" / "c4739a2868e
 
 def test_load_contract(contract):
     assert contract.workflow == "ui_to_api_binding"
-    assert contract.intent.expected_skill == "ui_to_api_binding_workflow"
+    assert contract.intent.expected_skill[0] == "ui_to_api_binding_workflow"
     assert "apiservice" in contract.resources
 
 
@@ -139,6 +139,239 @@ def test_normalizer_parses_load_skill_from_langgraph_messages():
     assert len(snap.skill_loads) == 1
     assert snap.skill_loads[0].skill_names == ["ui_to_api_binding_workflow"]
     assert snap.skill_loads[0].success is True
+
+
+def test_normalizer_computes_duration_from_trace_latency():
+    # Real Langfuse trace objects (GET /api/public/traces/{id}) expose a
+    # pre-aggregated "latency" in seconds and have no trace-level "endTime"
+    # at all -- only observations do. This is the primary source of duration.
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {
+            "metadata": {"entryagentid": "wm_agent"},
+            "name": "wm_agent",
+            "timestamp": "2026-01-01T10:00:00Z",
+            "latency": 45.5,
+        },
+        "observations": [],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert snap.duration_ms == 45500
+
+
+def test_normalizer_computes_duration_from_trace_start_end_when_no_latency():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {
+            "metadata": {"entryagentid": "wm_agent"},
+            "name": "wm_agent",
+            "timestamp": "2026-01-01T10:00:00Z",
+            "endTime": "2026-01-01T10:00:30Z",
+        },
+        "observations": [],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert snap.duration_ms == 30000
+
+
+def test_normalizer_derives_duration_from_observation_timestamps_as_last_resort():
+    # No "latency" and no trace-level "endTime" (the real-world case) -- fall
+    # back to the span of observation start/end timestamps we did fetch.
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {
+            "metadata": {"entryagentid": "wm_agent"},
+            "name": "wm_agent",
+            "timestamp": "2026-01-01T10:00:00Z",
+        },
+        "observations": [
+            {
+                "id": "tool-1",
+                "type": "TOOL",
+                "name": "read_files",
+                "startTime": "2026-01-01T10:00:01Z",
+                "endTime": "2026-01-01T10:00:02Z",
+            },
+            {
+                "id": "tool-2",
+                "type": "TOOL",
+                "name": "write_file",
+                "startTime": "2026-01-01T10:00:10Z",
+                "endTime": "2026-01-01T10:00:20Z",
+            },
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert snap.duration_ms == 20000  # trace timestamp (10:00:00) to last obs endTime (10:00:20)
+
+
+def test_normalizer_ignores_negative_one_sentinel_for_latency_and_total_cost():
+    # Langfuse returns -1 for latency/totalCost when the "metrics" field group
+    # was excluded from the fetch (e.g. fields="core,observations"), rather
+    # than omitting the fields -- this must not be treated as a real value.
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {
+            "metadata": {"entryagentid": "wm_agent"},
+            "name": "wm_agent",
+            "timestamp": "2026-01-01T10:00:00Z",
+            "latency": -1,
+            "totalCost": -1,
+        },
+        "observations": [],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert snap.duration_ms is None
+    assert snap.total_cost_usd is None
+
+
+def test_normalizer_falls_back_to_trace_total_cost_when_no_generation_usage():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {
+            "metadata": {"entryagentid": "wm_agent"},
+            "name": "wm_agent",
+            "totalCost": 0.042,
+        },
+        "observations": [],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert snap.generations == []
+    assert snap.total_cost_usd == 0.042
+
+
+def test_normalizer_prefers_generation_cost_sum_over_trace_total_cost():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {
+            "metadata": {"entryagentid": "wm_agent"},
+            "name": "wm_agent",
+            "totalCost": 999.0,
+        },
+        "observations": [
+            {
+                "id": "gen-1",
+                "type": "GENERATION",
+                "name": "ChatOpenAI",
+                "startTime": "2026-01-01T10:00:01Z",
+                "usageDetails": {"total": 1000},
+                "costDetails": {"total": 0.01},
+            },
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert snap.total_cost_usd == 0.01
+
+
+def test_normalizer_extracts_usage_and_cost_from_generation_usage_details():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {"metadata": {"entryagentid": "wm_agent"}, "name": "wm_agent"},
+        "observations": [
+            {
+                "id": "gen-1",
+                "type": "GENERATION",
+                "name": "ChatOpenAI",
+                "metadata": {"agentid": "wm_ui_expert"},
+                "startTime": "2026-01-01T10:00:07Z",
+                "usageDetails": {"input": 1200, "output": 300, "total": 1500},
+                "costDetails": {"input": 0.01, "output": 0.02, "total": 0.03},
+            },
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert len(snap.generations) == 1
+    gen = snap.generations[0]
+    assert gen.agent_id == "wm_ui_expert"
+    assert gen.input_tokens == 1200
+    assert gen.output_tokens == 300
+    assert gen.total_tokens == 1500
+    assert gen.cost_usd == 0.03
+    assert snap.total_tokens == 1500
+    assert snap.total_cost_usd == 0.03
+
+
+def test_normalizer_extracts_usage_from_legacy_usage_and_flat_cost_fields():
+    # Older Langfuse shapes: "usage" (not "usageDetails") with OpenAI-style
+    # prompt/completion naming, and a flat calculatedTotalCost instead of costDetails.
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {"metadata": {"entryagentid": "wm_agent"}, "name": "wm_agent"},
+        "observations": [
+            {
+                "id": "gen-1",
+                "type": "GENERATION",
+                "name": "ChatOpenAI",
+                "startTime": "2026-01-01T10:00:07Z",
+                "usage": {"promptTokens": 800, "completionTokens": 200},
+                "calculatedTotalCost": 0.015,
+            },
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert len(snap.generations) == 1
+    gen = snap.generations[0]
+    assert gen.input_tokens == 800
+    assert gen.output_tokens == 200
+    assert gen.total_tokens == 1000  # derived from input+output when "total" absent
+    assert gen.cost_usd == 0.015
+
+
+def test_normalizer_sums_usage_across_multiple_generations():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {"metadata": {"entryagentid": "wm_agent"}, "name": "wm_agent"},
+        "observations": [
+            {
+                "id": "gen-1",
+                "type": "GENERATION",
+                "name": "ChatOpenAI",
+                "startTime": "2026-01-01T10:00:01Z",
+                "usageDetails": {"total": 1000},
+                "costDetails": {"total": 0.01},
+            },
+            {
+                "id": "gen-2",
+                "type": "GENERATION",
+                "name": "ChatOpenAI",
+                "startTime": "2026-01-01T10:00:02Z",
+                "usageDetails": {"total": 500},
+                "costDetails": {"total": 0.005},
+            },
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert snap.total_tokens == 1500
+    assert snap.total_cost_usd == pytest.approx(0.015)
+
+
+def test_normalizer_skips_generations_with_no_usage_or_cost_data():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {"metadata": {"entryagentid": "wm_agent"}, "name": "wm_agent"},
+        "observations": [
+            {
+                "id": "gen-1",
+                "type": "GENERATION",
+                "name": "ChatOpenAI",
+                "startTime": "2026-01-01T10:00:01Z",
+            },
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+    assert snap.generations == []
+    assert snap.total_tokens is None
+    assert snap.total_cost_usd is None
 
 
 def test_normalizer_extracts_prompts_from_trace_messages():

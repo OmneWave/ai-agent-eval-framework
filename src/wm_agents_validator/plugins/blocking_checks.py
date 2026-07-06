@@ -21,7 +21,7 @@ class BlockingChecksPlugin:
         for result in prior_results or []:
             merged.update(result.blocking_checks)
 
-        resource_plugins = {"resource_coverage", "tool_policy", "file_mutability"}
+        resource_plugins = {"resource_coverage", "tool_policy", "context_grounding", "file_mutability"}
         resource_results = [r for r in (prior_results or []) if r.plugin in resource_plugins]
         all_resources_passed = all(r.passed for r in resource_results) if resource_results else True
 

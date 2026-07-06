@@ -1,0 +1,102 @@
+workflow: ui_to_api_binding
+contract_version: "1.0.0"
+
+intent:
+  expected_skill:
+    - ui_to_api_binding_workflow
+    - variables
+    - actions
+    - markup
+  allowed_skills:
+    - explore-codebase
+    - explore-api
+
+# Reference/catalog docs that are legitimate exploration reads (component/variable
+# API reference) even though no resource declares them as its context/target.
+# Reading them is fine; not reading them is fine too -- this just keeps them out
+# of "unrelated" scope-creep reporting. Kept as an explicit list (not a wildcard)
+# so any *other* catalog path being read is still surfaced as scope creep.
+allowed_context_reads:
+  - /catalog/components/wm-table-column/wm-table-column.md
+  - /catalog/components/wm-table/wm-table.md
+  - /catalog/variables/ApiAwareVariable/ApiAwareVariable.md
+  - /catalog/variables/BaseVariable/BaseVariable.md
+  - /catalog/variables/ServiceVariable/ServiceVariable.md
+  - /catalog/variables/ServiceVariable/events.md
+  - /catalog/variables/variables-list.md
+
+resources:
+  apiservice:
+    agent: wm_backend_expert
+    skip_if: null
+    operation: READ
+    context:
+      - petstore
+      - petstore_findPetsByTags
+    tools:
+      required:
+        - read_files
+      allowed:
+        - platform_getServiceDetails
+        - platform_getDefinitionInformation
+      forbidden:
+        - delete_file
+    files:
+      - path: services/petstore/designtime/petstore_API_REST_SERVICE.json
+        mutability: read_only
+
+  variable:
+    agent: wm_ui_expert
+    skip_if: null
+    operation: CREATE
+    context:
+      - petstore
+      - petstore_findPetsByTags
+    tools:
+      required:
+        - execute_tool
+      allowed:
+        - execute_tool
+        - edit_file_content
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/PetTable/PetTable.variables.json
+        mutability: editable
+
+  widget:
+    agent: wm_ui_expert
+    skip_if: null
+    operation: UPDATE
+    context:
+      - swagger_findPetsByTagsTable1
+      - PetTable
+    tools:
+      allowed:
+        - execute_tool
+        - edit_file_content
+        - write_file
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/PetTable/PetTable.html
+        mutability: editable
+
+blocking_checks:
+  - trace_complete
+  - planning_coverage_satisfied
+  - planning_order_satisfied
+  - all_resources_passed
+  - diagnostics_clean
+  - build_passed
+  - no_unrelated_diff
+
+slo:
+  valid_task_completion_rate: 0.95
+  max_blocking_failure_rate: 0.02
+  max_policy_violation_rate: 0.00
+
+budget:
+  max_duration_ms: 200000
+  max_total_tokens: 1100000
+  max_cost_usd: 1.00

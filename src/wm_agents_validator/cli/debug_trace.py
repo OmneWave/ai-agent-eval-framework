@@ -7,6 +7,7 @@ import sys
 from wm_agents_validator.cli.langfuse_config import add_langfuse_args, init_langfuse_env
 from wm_agents_validator.cli.trace_args import add_trace_args, resolve_trace_from_args
 from wm_agents_validator.controller.fetch import run_full_fetch
+from wm_agents_validator.report.colors import green, red
 from wm_agents_validator.trace.debug_probe import (
     ProbeStep,
     format_env_summary,
@@ -18,7 +19,7 @@ from wm_agents_validator.trace.debug_probe import (
 
 def _print_step(step: ProbeStep, *, verbose: bool) -> None:
     status = f"{step.status_code}" if step.status_code is not None else "ERR"
-    mark = "OK " if step.ok else "FAIL"
+    mark = green("OK ") if step.ok else red("FAIL")
     obs = f" obs={step.observation_count}" if step.observation_count else ""
     print(f"  [{mark}] {step.name}")
     print(f"       {step.method} {format_probe_url(step)}")

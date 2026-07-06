@@ -9,6 +9,7 @@ from wm_agents_validator.models.trace_snapshot import (
     DELEGATION_TOOL_NAMES,
     EventRecord,
     FailedToolRecord,
+    GenerationRecord,
     SKILL_TOOL,
     SkillLoadRecord,
     SpanRecord,
@@ -18,16 +19,9 @@ from wm_agents_validator.models.trace_snapshot import (
 )
 
 MAX_OUTPUT_BYTES = 2048
-METADATA_KEYS = (
-    "entryagentid",
-    "projectid",
-    "contract_id",
-    "model_name",
-    "agent_version",
-    "prompt_version",
-    "source",
-    "environment",
-)
+# Keys that are large/internal and shouldn't be copied verbatim into
+# TraceSnapshot.metadata (they're either handled specially below or add noise).
+_BULKY_METADATA_KEYS = frozenset({"resourceAttributes"})
 
 
 def _obs_get(obs: dict[str, Any], *keys: str) -> Any:
@@ -481,6 +475,85 @@ def _extract_skill_loads_from_spans(spans: list[SpanRecord]) -> list[SkillLoadRe
     return loads
 
 
+def _as_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_usage_tokens(obs: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
+    """Handles both Langfuse's newer ``usageDetails`` and older ``usage`` shapes,
+    plus the OpenAI-style prompt/completion naming some SDKs emit instead."""
+    usage = _parse_json(_obs_get(obs, "usageDetails", "usage"))
+    if not isinstance(usage, dict):
+        usage = {}
+
+    input_tokens = usage.get("input", usage.get("promptTokens", usage.get("input_tokens")))
+    output_tokens = usage.get("output", usage.get("completionTokens", usage.get("output_tokens")))
+    total_tokens = usage.get("total", usage.get("totalTokens", usage.get("total_tokens")))
+
+    input_tokens = _as_int(input_tokens)
+    output_tokens = _as_int(output_tokens)
+    total_tokens = _as_int(total_tokens)
+    if total_tokens is None and (input_tokens is not None or output_tokens is not None):
+        total_tokens = (input_tokens or 0) + (output_tokens or 0)
+
+    return input_tokens, output_tokens, total_tokens
+
+
+def _extract_cost_usd(obs: dict[str, Any]) -> float | None:
+    cost_details = _parse_json(_obs_get(obs, "costDetails"))
+    if isinstance(cost_details, dict) and cost_details.get("total") is not None:
+        try:
+            return float(cost_details["total"])
+        except (TypeError, ValueError):
+            pass
+
+    for key in ("calculatedTotalCost", "totalCost", "total_cost"):
+        value = _obs_get(obs, key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+
+    return None
+
+
+def _build_generations(
+    observations: list[dict[str, Any]], entry_agent: str | None
+) -> list[GenerationRecord]:
+    generations: list[GenerationRecord] = []
+    for obs in observations:
+        if str(_obs_get(obs, "type", "observationType") or "").upper() != "GENERATION":
+            continue
+
+        input_tokens, output_tokens, total_tokens = _extract_usage_tokens(obs)
+        cost_usd = _extract_cost_usd(obs)
+        if input_tokens is None and output_tokens is None and total_tokens is None and cost_usd is None:
+            # No usage/cost data was fetched or attached to this generation; skip
+            # rather than recording an all-None entry that would just be noise.
+            continue
+
+        timestamp = _obs_get(obs, "startTime", "start_time")
+        generations.append(
+            GenerationRecord(
+                name=str(_obs_get(obs, "name", "observationName") or "") or None,
+                agent_id=_obs_agent_id(obs, entry_agent),
+                timestamp=str(timestamp) if timestamp else None,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                cost_usd=cost_usd,
+            )
+        )
+    return generations
+
+
 def _build_custom_events(observations: list[dict[str, Any]]) -> list[EventRecord]:
     events: list[EventRecord] = []
     for obs in observations:
@@ -502,10 +575,20 @@ def _build_custom_events(observations: list[dict[str, Any]]) -> list[EventRecord
 
 
 def _curate_metadata(trace: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
-    curated: dict[str, Any] = {}
-    for key in METADATA_KEYS:
-        if key in metadata and metadata[key] is not None:
-            curated[key] = metadata[key]
+    # Pass through all caller-supplied metadata (minus known-bulky keys) rather
+    # than a hardcoded whitelist, so callers can stash arbitrary identifiers
+    # (e.g. a custom user-id key) without normalizer.py needing to know about
+    # every business-specific key name in advance.
+    curated: dict[str, Any] = {
+        key: value
+        for key, value in metadata.items()
+        if key not in _BULKY_METADATA_KEYS and value is not None
+    }
+
+    if "user_id" not in curated:
+        native_user_id = trace.get("userId") if isinstance(trace, dict) else None
+        if native_user_id:
+            curated["user_id"] = native_user_id
 
     if "environment" not in curated:
         resource_attrs = metadata.get("resourceAttributes")
@@ -540,11 +623,7 @@ def _derive_status(trace: dict[str, Any], tools_summary: ToolsSummary) -> str:
     return "success" if trace else "unknown"
 
 
-def _compute_duration_ms(trace: dict[str, Any]) -> int | None:
-    start = _obs_get(trace, "timestamp", "startTime", "start_time")
-    end = _obs_get(trace, "endTime", "end_time")
-    if not start or not end:
-        return None
+def _duration_from_timestamps(start: Any, end: Any) -> int | None:
     try:
         from datetime import datetime
 
@@ -554,6 +633,56 @@ def _compute_duration_ms(trace: dict[str, Any]) -> int | None:
     except (ValueError, TypeError):
         return None
 
+
+def _compute_duration_ms(
+    trace: dict[str, Any], observations: list[dict[str, Any]] | None = None
+) -> int | None:
+    # Langfuse's trace object doesn't expose an "endTime" of its own (only
+    # observations do) — it reports duration as a pre-aggregated "latency" in
+    # seconds instead. Prefer that; it's what the API actually returns.
+    latency_seconds = _obs_get(trace, "latency")
+    if latency_seconds is not None:
+        try:
+            latency = float(latency_seconds)
+            if latency >= 0:
+                return int(latency * 1000)
+        except (TypeError, ValueError):
+            pass
+
+    start = _obs_get(trace, "timestamp", "startTime", "start_time")
+    end = _obs_get(trace, "endTime", "end_time")
+    if start and end:
+        computed = _duration_from_timestamps(start, end)
+        if computed is not None:
+            return computed
+
+    # Last resort: derive the span from whatever start/end timestamps the
+    # fetched observations actually carry (ISO-8601 strings sort chronologically).
+    timestamps = [str(start)] if start else []
+    for obs in observations or []:
+        for key in ("startTime", "start_time", "endTime", "end_time"):
+            value = _obs_get(obs, key)
+            if value:
+                timestamps.append(str(value))
+    if len(timestamps) >= 2:
+        return _duration_from_timestamps(min(timestamps), max(timestamps))
+
+    return None
+
+
+
+def _extract_trace_total_cost(trace: dict[str, Any]) -> float | None:
+    # When a fetch strategy requests fields excluding the "metrics" group
+    # (e.g. fields="core,observations"), Langfuse returns -1 for totalCost/
+    # latency instead of omitting them -- treat that sentinel as "unavailable".
+    value = _obs_get(trace, "totalCost")
+    if value is None:
+        return None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError):
+        return None
+    return cost if cost >= 0 else None
 
 
 def normalize_trace(payload: RawTracePayload) -> TraceSnapshot:
@@ -580,6 +709,9 @@ def normalize_trace(payload: RawTracePayload) -> TraceSnapshot:
         _extract_skill_loads_from_trace(trace, observations, entry_agent_str),
     )
 
+    generations = _build_generations(observations, entry_agent_str)
+    trace_total_cost_usd = _extract_trace_total_cost(trace)
+
     user_prompt, final_response = _extract_prompts_from_trace(trace)
     session_id = metadata.get("langfuse_session_id") or metadata.get("thread_id") or _obs_get(
         trace, "sessionId", "session_id"
@@ -592,7 +724,7 @@ def normalize_trace(payload: RawTracePayload) -> TraceSnapshot:
         run_id=str(run_id) if run_id else None,
         entry_agent=entry_agent_str,
         status=_derive_status(trace, tools_summary),  # type: ignore[arg-type]
-        duration_ms=_compute_duration_ms(trace),
+        duration_ms=_compute_duration_ms(trace, observations),
         user_prompt=user_prompt,
         final_response=final_response,
         metadata=_curate_metadata(trace, metadata),
@@ -600,4 +732,6 @@ def normalize_trace(payload: RawTracePayload) -> TraceSnapshot:
         skill_loads=skill_loads,
         tools_summary=tools_summary,
         spans=spans,
+        generations=generations,
+        trace_total_cost_usd=trace_total_cost_usd,
     )
