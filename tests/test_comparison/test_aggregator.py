@@ -168,6 +168,50 @@ def test_build_comparison_report_extracts_checks_when_failing(snapshot):
     assert checks_by_label["widget"].passed is True
 
 
+def test_build_comparison_report_carries_violation_resource_for_dedup(snapshot):
+    # A violation's `resource` must survive into PluginViolation so renderers
+    # can tell "this violation explains that check" (dedup) apart from
+    # "this violation isn't covered by any single check" (must still show,
+    # e.g. context_grounding's unrelated-reads scope-creep warning even when
+    # every per-resource check is green).
+    report_obj = VerificationReport(
+        trace_id=snapshot.trace_id,
+        contract_id="test-contract",
+        passed=True,
+        overall_score=0.82,
+        plugin_results=[
+            PluginResult(
+                plugin="context_grounding",
+                passed=True,
+                score=0.82,
+                violations=[
+                    Violation(
+                        code="unrelated_context_fetched",
+                        message="File(s) read that aren't declared as context/target for any resource",
+                        plugin="context_grounding",
+                        resource="unrelated reads",
+                    )
+                ],
+                evidence={
+                    "checks": {
+                        "apiservice": {"passed": True, "detail": "context fully grounded"},
+                        "unrelated reads": {"passed": False, "detail": "scope creep"},
+                    }
+                },
+            ),
+        ],
+    )
+    outcome = TraceOutcome(
+        trace_id=snapshot.trace_id, verify_result=VerifyResult(report=report_obj, snapshot=snapshot)
+    )
+
+    report = build_comparison_report("test-contract", [outcome])
+
+    context_grounding = report.rows[0].plugin_scores[0]
+    assert context_grounding.violations[0].resource == "unrelated reads"
+    assert {c.label for c in context_grounding.checks} == {"apiservice", "unrelated reads"}
+
+
 def test_build_comparison_report_mixes_success_and_error_rows(snapshot):
     outcomes = [
         TraceOutcome(trace_id=snapshot.trace_id, verify_result=_verify_result(snapshot)),

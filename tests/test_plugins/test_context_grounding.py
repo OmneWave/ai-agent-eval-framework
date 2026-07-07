@@ -90,6 +90,12 @@ def test_context_grounding_passes_with_fixture(snapshot, contract):
     for resource_report in result.evidence["resources"].values():
         assert resource_report["missing_paths"] == []
         assert resource_report["missing_context"] == []
+    # A clean run reports an explicit "no scope creep" check alongside the
+    # per-resource ones, so a 100% score has a check line to point to too.
+    assert result.evidence["checks"]["unrelated reads"] == {
+        "passed": True,
+        "detail": "no unrelated files read",
+    }
 
 
 def test_context_grounding_flags_missing_path(snapshot, contract):
@@ -129,6 +135,50 @@ def test_context_grounding_flags_deviation_without_hard_failure(snapshot, contra
 
     apiservice_report = result.evidence["resources"]["apiservice"]
     assert "petstore_findPetsByTags" in apiservice_report["missing_context"]
+    # Checked against both input and output before being reported missing --
+    # a term absent from both has no location entry.
+    assert "petstore_findPetsByTags" not in apiservice_report["context_locations"]
+    assert "input or output" in apiservice_report["reason"]
+
+    deviation_violation = next(v for v in result.violations if v.code == "context_deviation")
+    assert "input or output" in deviation_violation.message
+    assert deviation_violation.evidence["context_locations"] == apiservice_report["context_locations"]
+
+
+def test_context_grounding_finds_context_term_in_tool_output_only(snapshot, contract):
+    # A context term that never appears in any tool call's *input* but does
+    # show up in a tool call's *output* (e.g. a lookup result) still counts
+    # as grounded -- the agent engaged with it, just via the result side.
+    for span in snapshot.spans:
+        if span.id == "span-read-files":
+            span.input = {"paths": span.input["paths"]}  # drop operationId from input
+        if span.id == "span-create-var":
+            span.input = {"tool": span.input["tool"], "path": span.input["path"]}
+            span.output = {"result": "resolved operationId petstore_findPetsByTags"}
+
+    result = ContextGroundingPlugin().evaluate(snapshot, contract)
+
+    assert result.passed
+    codes = [v.code for v in result.violations]
+    assert "context_deviation" not in codes
+
+    apiservice_report = result.evidence["resources"]["apiservice"]
+    assert "petstore_findPetsByTags" in apiservice_report["found_context"]
+    assert apiservice_report["missing_context"] == []
+    assert apiservice_report["context_locations"]["petstore_findPetsByTags"] == "output only"
+
+
+def test_context_grounding_reports_input_and_output_location_when_found_in_both(snapshot, contract):
+    for span in snapshot.spans:
+        if span.id == "span-create-var":
+            span.output = {"result": "resolved operationId petstore_findPetsByTags"}
+
+    result = ContextGroundingPlugin().evaluate(snapshot, contract)
+
+    assert result.passed
+    assert result.score == 1.0
+    apiservice_report = result.evidence["resources"]["apiservice"]
+    assert apiservice_report["context_locations"]["petstore_findPetsByTags"] == "input and output"
 
 
 def test_context_grounding_skips_resources_without_files_or_context(snapshot, contract):
@@ -166,6 +216,15 @@ def test_context_grounding_flags_unrelated_file_read(snapshot, contract):
     assert result.evidence["unrelated_reads"] == [
         "src/main/webapp/pages/OtherPage/OtherPage.html"
     ]
+    # Regression: this is what explains a score < 100% even when every
+    # per-resource check reports "context fully grounded" -- without this
+    # entry (and without the violation's `resource` tying back to it), a
+    # renderer that only shows checks on a clean pass has no visible reason
+    # for the score drop.
+    assert result.evidence["checks"]["unrelated reads"]["passed"] is False
+    assert "OtherPage.html" in result.evidence["checks"]["unrelated reads"]["detail"]
+    unrelated_violation = next(v for v in result.violations if v.code == "unrelated_context_fetched")
+    assert unrelated_violation.resource == "unrelated reads"
 
 
 def test_context_grounding_does_not_flag_allowed_context_reads(snapshot, contract):

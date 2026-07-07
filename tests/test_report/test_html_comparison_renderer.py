@@ -80,6 +80,41 @@ def test_render_escapes_closing_script_tags_in_data():
     )
 
 
+def test_render_embeds_violation_resource_for_client_side_dedup():
+    # `resource` links a violation back to the PluginCheck it explains (for
+    # client-side dedup against checkLabels) -- it must survive into the
+    # embedded JSON, not just live on the Python model.
+    report = ComparisonReport(
+        contract_id="c",
+        rows=[
+            ComparisonRow(
+                trace_id="trace-1",
+                plugin_scores=[
+                    PluginScore(
+                        plugin="context_grounding",
+                        passed=True,
+                        score=0.82,
+                        violations=[
+                            PluginViolation(
+                                code="unrelated_context_fetched",
+                                message="scope creep",
+                                resource="unrelated reads",
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    html = HtmlComparisonRenderer().render(report)
+
+    embedded = _extract_embedded_data(html)
+    assert (
+        embedded["rows"][0]["plugin_scores"][0]["violations"][0]["resource"] == "unrelated reads"
+    )
+
+
 def test_render_includes_heatmap_and_contract_data_for_multi_contract_report():
     report_a = ComparisonReport(
         contract_id="contract-a",

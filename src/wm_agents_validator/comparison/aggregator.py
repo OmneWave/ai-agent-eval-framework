@@ -64,7 +64,8 @@ def _row_from_success(outcome: TraceOutcome, *, contract_id: str, user_id_key: s
             passed=result.passed,
             score=result.score,
             violations=[
-                PluginViolation(code=v.code, message=v.message) for v in result.violations
+                PluginViolation(code=v.code, message=v.message, resource=v.resource)
+                for v in result.violations
             ],
             checks=_extract_checks(result.evidence),
         )

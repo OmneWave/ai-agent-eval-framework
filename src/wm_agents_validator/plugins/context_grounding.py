@@ -14,7 +14,11 @@ from wm_agents_validator.models.trace_snapshot import (
 )
 from wm_agents_validator.models.workflow_contract import WorkflowContract
 
-SpanIndexEntry = tuple[SpanRecord, list[str], str]
+SpanIndexEntry = tuple[SpanRecord, list[str], str, str]
+"""(span, extracted_paths, input_blob, output_blob) -- input/output are separate
+lowercased JSON blobs so a context term's presence can be attributed to the
+tool call's arguments vs. its result, instead of one merged blob that hides
+which side actually carried the context."""
 
 # The tool whose entire purpose is pulling file content into the agent's
 # context window. Search/scan tools (grep_in_files, find_files_by_glob) only
@@ -41,6 +45,14 @@ class ContextGroundingPlugin:
     file(s) (``resource.files[].path``) and any declared context terms
     (``resource.context``) — was actually retrieved through a tool call, instead
     of being assumed, guessed, or hallucinated.
+
+    Declared context terms are checked against *both* a tool call's input
+    (arguments) and its output (result), since a term can legitimately surface
+    either way -- e.g. an operation id the agent typed into a call's arguments,
+    or a value that only came back in a lookup's result. A term missing from
+    both sides is reported as a real deviation; the report also records which
+    side(s) a found term actually came from, so "grounded via input" and
+    "grounded via output" aren't conflated.
 
     For every active resource it compares what was *expected* to be read against
     what tool calls *actually* referenced anywhere in the trace, reports the
@@ -80,7 +92,9 @@ class ContextGroundingPlugin:
             all_expected_patterns.extend(expected_paths)
 
             retrieved_paths, missing_paths, closest_match = self._check_paths(expected_paths, span_index)
-            found_terms, missing_terms = self._check_context_terms(expected_context, span_index)
+            found_terms, missing_terms, context_locations = self._check_context_terms(
+                expected_context, span_index
+            )
 
             total = len(expected_paths) + len(expected_context)
             matched = len(retrieved_paths) + len(found_terms)
@@ -108,18 +122,25 @@ class ContextGroundingPlugin:
                     )
                 )
             if missing_terms:
-                reasons.append(f"context term(s) never observed in any tool call: {missing_terms}")
+                reasons.append(
+                    f"context term(s) never observed in any tool call's input or output: {missing_terms}"
+                )
                 violations.append(
                     Violation(
                         code="context_deviation",
                         message=(
                             f"Resource '{resource_name}' declares context {expected_context}, "
-                            f"but {missing_terms} never showed up in any tool input — the agent's "
-                            f"actual context appears to have drifted from what the task expected"
+                            f"but {missing_terms} never showed up in any tool call's input or "
+                            f"output — the agent's actual context appears to have drifted from "
+                            f"what the task expected"
                         ),
                         plugin=self.name,
                         resource=resource_name,
-                        evidence={"expected_context": expected_context, "missing_context": missing_terms},
+                        evidence={
+                            "expected_context": expected_context,
+                            "missing_context": missing_terms,
+                            "context_locations": context_locations,
+                        },
                     )
                 )
 
@@ -130,6 +151,10 @@ class ContextGroundingPlugin:
                 "expected_context": expected_context,
                 "found_context": found_terms,
                 "missing_context": missing_terms,
+                # Where each found term actually turned up: "input", "output",
+                # or "input and output". Absent for terms in `missing_context`
+                # since those were checked against both and found in neither.
+                "context_locations": context_locations,
                 "score": round(resource_score, 2),
                 "reason": "; ".join(reasons) if reasons else "context fully grounded",
             }
@@ -152,7 +177,9 @@ class ContextGroundingPlugin:
         penalty_factor = total_expected_items / denominator if denominator else 1.0
         score = base_score * penalty_factor
 
+        unrelated_label = "unrelated reads"
         if unrelated_reads:
+            unrelated_detail = f"scope creep -- read but not declared for any resource: {unrelated_reads}"
             violations.append(
                 Violation(
                     code="unrelated_context_fetched",
@@ -161,6 +188,7 @@ class ContextGroundingPlugin:
                         f"{unrelated_reads}"
                     ),
                     plugin=self.name,
+                    resource=unrelated_label,
                     evidence={
                         "unrelated_paths": unrelated_reads,
                         "expected_patterns": sorted(set(all_expected_patterns)),
@@ -168,6 +196,8 @@ class ContextGroundingPlugin:
                     },
                 )
             )
+        else:
+            unrelated_detail = "no unrelated files read"
 
         # Missing the reference file entirely is a hard failure (context was never grounded);
         # a declared context term not surfacing anywhere, or an unrelated file being read,
@@ -188,8 +218,15 @@ class ContextGroundingPlugin:
                 # generic renderer can show the full breakdown without knowing
                 # anything about "resources" specifically.
                 "checks": {
-                    name: {"passed": r["score"] >= 1.0, "detail": r["reason"]}
-                    for name, r in resource_reports.items()
+                    **{
+                        name: {"passed": r["score"] >= 1.0, "detail": r["reason"]}
+                        for name, r in resource_reports.items()
+                    },
+                    # Surfaced as its own check (not folded into a resource) since
+                    # scope creep isn't about any single resource -- it's what
+                    # explains a score below 100% even when every resource above
+                    # shows "context fully grounded".
+                    unrelated_label: {"passed": not unrelated_reads, "detail": unrelated_detail},
                 },
             },
         )
@@ -200,7 +237,7 @@ class ContextGroundingPlugin:
         """Files pulled into context via read_files that match no resource's file scope."""
         seen: set[str] = set()
         unrelated: set[str] = set()
-        for span, paths, _blob in span_index:
+        for span, paths, _input_blob, _output_blob in span_index:
             if _span_base_name(span.name) != _CONTEXT_READ_TOOL:
                 continue
             for path in paths:
@@ -217,14 +254,15 @@ class ContextGroundingPlugin:
             if span.type != "TOOL":
                 continue
             paths = extract_paths_from_input(span.input or {}, _span_base_name(span.name))
-            blob = json.dumps(span.input or {}, default=str).lower()
-            index.append((span, paths, blob))
+            input_blob = json.dumps(span.input or {}, default=str).lower()
+            output_blob = json.dumps(span.output, default=str).lower() if span.output is not None else ""
+            index.append((span, paths, input_blob, output_blob))
         return index
 
     def _check_paths(
         self, expected_paths: list[str], span_index: list[SpanIndexEntry]
     ) -> tuple[set[str], list[str], str | None]:
-        all_seen_paths = [p for _, paths, _ in span_index for p in paths]
+        all_seen_paths = [p for _, paths, _, _ in span_index for p in paths]
         retrieved = {
             expected
             for expected in expected_paths
@@ -247,13 +285,31 @@ class ContextGroundingPlugin:
 
     def _check_context_terms(
         self, expected_context: list[str], span_index: list[SpanIndexEntry]
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[str], list[str], dict[str, str]]:
+        """A term counts as grounded if it shows up in a tool call's input
+        *or* its output -- either is legitimate evidence the agent actually
+        engaged with that context, not just the input side. ``locations``
+        records exactly which side(s) each found term came from, so the
+        report can distinguish "the agent referenced this" (input) from
+        "this only ever came back in a result" (output) instead of hiding
+        that distinction behind a flat found/missing bit.
+        """
         found: list[str] = []
         missing: list[str] = []
+        locations: dict[str, str] = {}
         for term in expected_context:
             needle = term.lower()
-            if any(needle in blob for _, _, blob in span_index):
+            in_input = any(needle in input_blob for _, _, input_blob, _ in span_index)
+            in_output = any(needle in output_blob for _, _, _, output_blob in span_index)
+            if in_input and in_output:
                 found.append(term)
+                locations[term] = "input and output"
+            elif in_input:
+                found.append(term)
+                locations[term] = "input only"
+            elif in_output:
+                found.append(term)
+                locations[term] = "output only"
             else:
                 missing.append(term)
-        return found, missing
+        return found, missing, locations

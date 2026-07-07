@@ -77,4 +77,4 @@ def test_full_runner_passes(snapshot, contract, context):
     report = run_plugins(snapshot, contract, context=context)
     assert report.overall_score > 0.5
     assert report.trace_id == "test-trace-001"
-    assert len(report.plugin_results) == 8
+    assert len(report.plugin_results) == 7

@@ -17,6 +17,7 @@ class ToolPolicyPlugin:
     ) -> PluginResult:
         ctx = context or EvalContext()
         violations: list[Violation] = []
+        checks: dict[str, dict] = {}
         active_count = 0
         passed_count = 0
 
@@ -26,6 +27,7 @@ class ToolPolicyPlugin:
             active_count += 1
             policy = resource.tools
             resource_passed = True
+            reasons: list[str] = []
             resource_paths = [
                 resolve_path_template(f.path, ctx) for f in resource.files
             ]
@@ -33,6 +35,7 @@ class ToolPolicyPlugin:
             for required_tool in policy.required:
                 if required_tool not in snapshot.tool_names:
                     resource_passed = False
+                    reasons.append(f"required tool '{required_tool}' never used")
                     violations.append(
                         Violation(
                             code="required_tool_missing",
@@ -49,6 +52,7 @@ class ToolPolicyPlugin:
                 ):
                     continue
                 resource_passed = False
+                reasons.append(f"forbidden tool '{forbidden_tool}' used on its file scope")
                 violations.append(
                     Violation(
                         code="forbidden_tool_used",
@@ -65,6 +69,10 @@ class ToolPolicyPlugin:
                     )
                 )
 
+            checks[resource_name] = {
+                "passed": resource_passed,
+                "detail": "; ".join(reasons) if reasons else "required tools used, no forbidden tool used",
+            }
             if resource_passed:
                 passed_count += 1
 
@@ -74,7 +82,7 @@ class ToolPolicyPlugin:
             passed=len(violations) == 0,
             score=score,
             violations=violations,
-            evidence={"active_resources": active_count, "passed_resources": passed_count},
+            evidence={"active_resources": active_count, "passed_resources": passed_count, "checks": checks},
         )
 
     def _forbidden_tool_violates(

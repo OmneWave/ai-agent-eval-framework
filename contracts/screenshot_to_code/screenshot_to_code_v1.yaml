@@ -25,6 +25,15 @@ intent:
     - token-schema
     - partial-templates
 
+allowed_context_reads:
+  - /catalog/components/wm-table-column/wm-table-column.md
+  - /catalog/components/wm-table/wm-table.md
+  - /catalog/variables/ApiAwareVariable/ApiAwareVariable.md
+  - /catalog/variables/BaseVariable/BaseVariable.md
+  - /catalog/variables/ServiceVariable/ServiceVariable.md
+  - /catalog/variables/ServiceVariable/events.md
+  - /catalog/variables/variables-list.md
+  
 resources:
   page:
     agent: wm_screenshot_to_code_agent
