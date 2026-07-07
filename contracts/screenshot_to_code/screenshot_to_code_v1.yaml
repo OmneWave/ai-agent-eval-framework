@@ -1,0 +1,179 @@
+workflow: screenshot_to_code
+contract_version: "1.0.0"
+
+intent:
+  expected_skill: 
+    - screenshot-to-wavemaker-web
+    - new_page_from_screenshot_workflow
+    - components-list
+    - page-layouts
+    - foundation-tokens
+    - phase3-tokens
+    - variables
+    - pattern-detection
+    - container-system
+    - layout-rules
+    - widget-templates
+    - widget-defaults
+
+  allowed_skills:
+    - output-cloud
+    - explore-codebase
+    - interaction-patterns
+    - advanced-tabs
+    - advanced-form
+    - token-schema
+    - partial-templates
+
+resources:
+  page:
+    agent: wm_screenshot_to_code_agent
+    skip_if: null
+    operation: CREATE
+    context:
+      - page
+    tools:
+      required:
+        - platform_createWebPage
+        - platform_listPages
+      allowed:
+        - platform_getSessionResource
+        - find_files_by_glob
+        - load_skill
+        - start_new_conversation_with_agent
+        - ui_getPageScreenshot
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/CreateProduct/CreateProduct.html
+        mutability: editable
+
+  widget:
+    agent: wm_screenshot_to_code_agent
+    skip_if: null
+    operation: CREATE
+    context:
+      - page
+    tools:
+      required:
+        - write_file
+      allowed:
+        - read_files
+        - find_files_by_glob
+        - ui_getPageScreenshot
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/CreateProduct/CreateProduct.html
+        mutability: editable
+
+  variable:
+    agent: wm_screenshot_to_code_agent
+    skip_if: null
+    operation: CREATE
+    context:
+      - page
+    tools:
+      required:
+        - ui_createNonApiAwareVariable
+      allowed:
+        - read_files
+        - edit_file_content
+        - write_file
+        - create_variable
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/CreateProduct/CreateProduct.variables.json
+        mutability: tool_managed
+
+  design_tokens:
+    agent: wm_screenshot_to_code_agent
+    skip_if: null
+    operation: UPDATE
+    context:
+      - page
+    tools:
+      required: []
+      allowed:
+        - write_file
+        - read_files
+        - find_files_by_glob
+      forbidden:  
+        - delete_file
+    files:
+      - path: src/main/webapp/design-tokens/overrides/**/*.json
+        mutability: editable
+      - path: src/main/webapp/pages/CreateProduct/CreateProduct.tokens-plan.json
+        mutability: editable
+
+  header:
+    agent: wm_screenshot_to_code_agent
+    skip_if: null
+    operation: CREATE
+    context:
+      - page
+    tools:
+      required:
+        - write_file
+      allowed:
+        - read_files
+        - find_files_by_glob
+        - ui_getPageScreenshot
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/createProductHeader/createProductHeader.html
+        mutability: editable
+
+  layout:
+    agent: wm_screenshot_to_code_agent
+    skip_if: null
+    operation: CREATE
+    context:
+      - page
+    tools:
+      required: []
+      allowed:
+        - write_file
+        - read_files
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/CreateProduct/CreateProduct.layout-plan.json
+        mutability: editable
+
+  javascript:
+    agent: wm_screenshot_to_code_agent
+    skip_if: null
+    operation: UPDATE
+    context:
+      - page
+    tools:
+      required: []
+      allowed:
+        - write_file
+        - read_files
+      forbidden:
+        - delete_file
+    files:
+      - path: src/main/webapp/pages/CreateProduct/CreateProduct.js
+        mutability: editable
+
+allowed_context_reads:
+  - src/main/webapp/pages/header/header.html
+  - src/main/webapp/pages/leftnav/leftnav.html
+
+blocking_checks:
+  - trace_complete
+  - planning_coverage_satisfied
+  - planning_order_satisfied
+  - all_resources_passed
+  - diagnostics_clean
+  - build_passed
+  - no_unrelated_diff
+
+slo:
+  valid_task_completion_rate: 0.90
+  max_blocking_failure_rate: 0.05
+  max_policy_violation_rate: 0.00
