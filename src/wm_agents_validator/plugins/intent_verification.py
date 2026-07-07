@@ -31,6 +31,14 @@ class IntentVerificationPlugin:
             s for s in unique_loaded if s not in expected_skills and s not in allowed_skills
         ]
 
+        successful = [s for load in snapshot.skill_loads if load.success for s in load.skill_names]
+        missing = [s for s in expected_skills if s not in successful]
+        never_loaded = [s for s in missing if s not in loaded_skills]
+        failed_to_load = [s for s in missing if s in loaded_skills and s not in successful]
+        correct = len(expected_skills) - len(missing)
+        denominator = len(expected_skills) + len(extra_skills)
+        score = correct / denominator if denominator else 0.0
+
         evidence = {
             "expected_skill": expected,
             "allowed_skills": allowed_skills,
@@ -41,30 +49,6 @@ class IntentVerificationPlugin:
         }
 
         violations: list[Violation] = []
-        if extra_skills:
-            violations.append(
-                Violation(
-                    code="extra_skill_loaded",
-                    message=f"Extra skill(s) loaded beyond expected: {extra_skills}",
-                    plugin=self.name,
-                    evidence=evidence,
-                )
-            )
-
-        successful = [s for load in snapshot.skill_loads if load.success for s in load.skill_names]
-        missing = [s for s in expected_skills if s not in successful]
-        correct = len(expected_skills) - len(missing)
-        denominator = len(expected_skills) + len(extra_skills)
-        score = correct / denominator if denominator else 0.0
-
-        if not missing:
-            return PluginResult(
-                plugin=self.name, passed=True, score=score, violations=violations, evidence=evidence
-            )
-
-        never_loaded = [s for s in missing if s not in loaded_skills]
-        failed_to_load = [s for s in missing if s in loaded_skills and s not in successful]
-
         if never_loaded:
             violations.append(
                 Violation(
@@ -83,7 +67,42 @@ class IntentVerificationPlugin:
                     evidence=evidence,
                 )
             )
+        if extra_skills:
+            violations.append(
+                Violation(
+                    code="extra_skill_loaded",
+                    message=f"Extra skill(s) loaded beyond expected: {extra_skills}",
+                    plugin=self.name,
+                    resource="extra skills",
+                    evidence=evidence,
+                )
+            )
+
+        # One check per expected skill (loaded/failed/never-loaded), plus one
+        # rollup for scope creep -- so a partial pass/fail always shows *which*
+        # skill(s) are responsible, not just an aggregate score.
+        checks: dict[str, dict] = {}
+        for skill in expected_skills:
+            if skill in successful:
+                checks[skill] = {"passed": True, "detail": "loaded successfully"}
+            elif skill in loaded_skills:
+                checks[skill] = {"passed": False, "detail": "requested but load failed"}
+            else:
+                checks[skill] = {"passed": False, "detail": "expected skill never loaded"}
+        checks["extra skills"] = {
+            "passed": not extra_skills,
+            "detail": (
+                f"unexpected skill(s) loaded: {extra_skills}"
+                if extra_skills
+                else "none beyond expected/allowed"
+            ),
+        }
+        evidence["checks"] = checks
 
         return PluginResult(
-            plugin=self.name, passed=False, score=score, violations=violations, evidence=evidence
+            plugin=self.name,
+            passed=not missing,
+            score=score,
+            violations=violations,
+            evidence=evidence,
         )

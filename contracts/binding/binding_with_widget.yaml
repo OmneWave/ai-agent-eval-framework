@@ -86,7 +86,6 @@ blocking_checks:
   - trace_complete
   - planning_coverage_satisfied
   - planning_order_satisfied
-  - all_resources_passed
   - diagnostics_clean
   - build_passed
   - no_unrelated_diff

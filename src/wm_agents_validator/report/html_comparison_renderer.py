@@ -408,7 +408,7 @@ _TEMPLATE = """<!DOCTYPE html>
       { key: 'duration_ms', label: 'Duration', sortable: true },
       { key: 'total_tokens', label: 'Tokens', sortable: true },
       { key: 'total_cost_usd', label: 'Cost', sortable: true },
-      { key: 'overall_score', label: 'Result', sortable: true },
+      { key: 'overall_score', label: 'Score', sortable: true },
       { key: '_plugins', label: 'Plugins' },
     ];
 
@@ -431,7 +431,7 @@ _TEMPLATE = """<!DOCTYPE html>
     function resultBadgeHtml(row) {
       if (row.status === 'error') return `<span class="badge red">ERROR</span>`;
       const tier = tierOf(row);
-      return `<span class="badge ${tier}">${fmtScore(row.overall_score)} · ${row.passed ? 'PASS' : 'FAIL'}</span>`;
+      return `<span class="badge ${tier}">${fmtScore(row.overall_score)}</span>`;
     }
 
     function pluginSummaryHtml(row) {
@@ -479,12 +479,19 @@ _TEMPLATE = """<!DOCTYPE html>
         // Plugins that evaluate several named things (e.g. context_grounding's
         // per-resource checks) report each one's outcome in `checks`, pass or
         // fail, so the drill-down shows the full breakdown even on a clean
-        // pass -- not just an empty section. When present, checks supersede
-        // the flat violations list (they already carry the failure reason).
+        // pass -- not just an empty section. A violation whose `resource`
+        // matches a check's label is just that check's failure reason and is
+        // skipped below to avoid printing it twice; violations that aren't
+        // tied to any single check (e.g. context_grounding's unrelated-reads
+        // warning) must still be shown, or a score drop below 100% would have
+        // no visible explanation even though every check line is green.
+        const checkLabels = new Set((p.checks || []).map(c => c.label));
         const checkItems = (p.checks || []).map(c => `
           <div class="violation-item ${c.passed ? 'ok' : ''}">${c.passed ? '✓' : '⚠'} <strong>${esc(c.label)}</strong>${c.detail ? ': ' + esc(c.detail) : ''}</div>
         `).join('');
-        const violationItems = checkItems ? '' : (p.violations || []).map(v => `
+        const violationItems = (p.violations || [])
+          .filter(v => !(v.resource && checkLabels.has(v.resource)))
+          .map(v => `
           <div class="violation-item">⚠ <strong>${esc(v.code)}</strong>: ${esc(v.message)}</div>
         `).join('');
         const noDetailFallback = !p.passed && !checkItems && !violationItems

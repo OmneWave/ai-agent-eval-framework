@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from wm_agents_validator.plugins.base import EvaluatorPlugin
-from wm_agents_validator.plugins.blocking_checks import BlockingChecksPlugin
 from wm_agents_validator.plugins.context_grounding import ContextGroundingPlugin
 from wm_agents_validator.plugins.file_mutability import FileMutabilityPlugin
 from wm_agents_validator.plugins.intent_verification import IntentVerificationPlugin
@@ -28,7 +27,6 @@ PLUGIN_WEIGHTS: dict[str, float] = {
     "file_mutability": 0.15,
     "trace_health": 0.10,
     "resource_usage": 0.05,
-    "blocking_checks": 0.05,
 }
 
 _PLUGIN_CLASSES: dict[str, type] = {
@@ -39,7 +37,6 @@ _PLUGIN_CLASSES: dict[str, type] = {
     "file_mutability": FileMutabilityPlugin,
     "trace_health": TraceHealthPlugin,
     "resource_usage": ResourceUsagePlugin,
-    "blocking_checks": BlockingChecksPlugin,
 }
 
 

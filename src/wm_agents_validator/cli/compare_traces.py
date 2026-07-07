@@ -21,11 +21,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "  # One contract, several LLMs\n"
             "  uv run compare-traces --contract contracts/foo.yaml "
             "--trace-ids abc123,def456 --out report.html\n\n"
-            "  # Several contracts, each with its own trace(s) (repeat both flags,\n"
-            "  # in matching order)\n"
+            "  # Several contracts, each with its own trace(s) -- embed the ids directly\n"
+            "  # in --contract ('path:id1,id2') so each one is self-contained; no need to\n"
+            "  # keep a separate --trace-ids list in matching order\n"
             "  uv run compare-traces \\\n"
-            "    --contract contracts/foo.yaml --trace-ids gpt4-trace,claude-trace \\\n"
-            "    --contract contracts/bar.yaml --trace-ids gpt4-trace-2,claude-trace-2 \\\n"
+            "    --contract contracts/foo.yaml:gpt4-trace,claude-trace \\\n"
+            "    --contract contracts/bar.yaml:gpt4-trace-2,claude-trace-2 \\\n"
             "    --out report.html\n\n"
             "  # Time range (single contract only)\n"
             "  uv run compare-traces --contract contracts/foo.yaml "
@@ -38,19 +39,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--contract",
         action="append",
         required=True,
-        help="Path to a WorkflowContract YAML. Repeat to compare multiple contracts, "
-        "pairing each with its own --trace-ids (same order).",
+        metavar="CONTRACT_PATH[:TRACE_ID[,TRACE_ID...]]",
+        help="Path to a WorkflowContract YAML. To compare multiple contracts, repeat "
+        "this flag with each trace's ids embedded directly, e.g. "
+        "'path/to.yaml:id1,id2' -- this keeps each contract self-contained instead of "
+        "relying on a separate --trace-ids list lining up by position. A single bare "
+        "path (no ':') works with --trace-ids or --from/--to as before.",
     )
 
     source_group = parser.add_argument_group(
         "Trace selection (pick one)",
-        "Either --trace-ids (repeatable, one per --contract), or a --from/--to time range",
+        "Either --trace-ids / ids embedded in --contract, or a --from/--to time range",
     )
     source_group.add_argument(
         "--trace-ids",
         action="append",
-        help="Comma-separated Langfuse trace IDs to compare directly. Repeat once per "
-        "--contract when comparing multiple contracts.",
+        help="Comma-separated Langfuse trace IDs to compare directly. Only usable with "
+        "a single, bare --contract (no embedded ids) -- for multiple contracts, embed "
+        "each one's ids in its own --contract value instead.",
     )
     source_group.add_argument("--from", dest="from_ts", help="Range start, ISO-8601 (e.g. 2026-07-01T00:00:00Z)")
     source_group.add_argument("--to", dest="to_ts", help="Range end, ISO-8601")
@@ -80,52 +86,82 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _split_contract_arg(value: str) -> tuple[str, list[str]]:
+    """Splits one `--contract` value into (path, embedded_trace_ids).
+
+    `path/to.yaml:id1,id2` attaches trace ids directly to that contract, so
+    the (contract, trace ids) association is explicit and self-contained
+    right there in a single flag, instead of depending on a same-order
+    `--trace-ids` occurrence elsewhere on the command line. A bare path (no
+    `:`) has no embedded ids and falls back to `--trace-ids`/`--from`-`--to`.
+    """
+    if ":" not in value:
+        return value, []
+    path, ids_part = value.split(":", 1)
+    ids = [t.strip() for t in ids_part.split(",") if t.strip()]
+    return path.strip(), ids
+
+
 def _resolve_contract_trace_groups(
     contracts: list[str], trace_id_groups: list[str]
 ) -> list[tuple[str, list[str]]]:
-    """Pairs `--contract` entries up with `--trace-ids` entries.
+    """Builds (contract_path, trace_ids) groups from `--contract` values.
 
-    - Exactly one `--contract`: every `--trace-ids` occurrence is pooled
-      together under that one contract (so repeating `--trace-ids` is just a
-      convenience for listing lots of IDs, not a multi-contract signal).
-    - Multiple `--contract` entries: requires exactly as many `--trace-ids`
-      entries, paired up pairwise in command-line order.
+    - A single `--contract` (bare, or with embedded ids): any `--trace-ids`
+      occurrences are pooled in on top of its embedded ids, if any -- this is
+      just a convenience for listing lots of ids for the one contract.
+    - Multiple `--contract` values: each one must embed its own trace ids
+      (`path:id1,id2`). This is what makes the contract<->trace association
+      explicit instead of relying on a second `--trace-ids` list staying in
+      sync by position -- so no embedded ids anywhere, or a stray
+      `--trace-ids`, is a user error here rather than silently mispairing.
     """
-    if len(contracts) == 1:
-        pooled = [t.strip() for group in trace_id_groups for t in group.split(",") if t.strip()]
-        return [(contracts[0], pooled)]
+    parsed = [_split_contract_arg(c) for c in contracts]
+    pooled_trace_ids = [t.strip() for group in trace_id_groups for t in group.split(",") if t.strip()]
 
-    if len(trace_id_groups) != len(contracts):
+    if len(parsed) == 1:
+        path, embedded_ids = parsed[0]
+        return [(path, embedded_ids + pooled_trace_ids)]
+
+    missing_embedded = [path for path, ids in parsed if not ids]
+    if missing_embedded or pooled_trace_ids:
         raise ValueError(
-            "When passing multiple --contract values, pass exactly as many --trace-ids "
-            "values, one per --contract, in matching order."
+            "When passing multiple --contract values, each one must embed its own "
+            "trace ids, e.g. --contract path/to.yaml:id1,id2 "
+            "--contract path/to/other.yaml:id3,id4 -- --trace-ids isn't supported "
+            "alongside multiple --contract values."
         )
-    return [
-        (contract, [t.strip() for t in group.split(",") if t.strip()])
-        for contract, group in zip(contracts, trace_id_groups)
-    ]
+    return [(path, ids) for path, ids in parsed]
 
 
 def main() -> None:
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    has_explicit_ids = bool(args.trace_ids)
+    has_embedded_ids = any(":" in c for c in args.contract)
+    has_explicit_ids = bool(args.trace_ids) or has_embedded_ids
     has_time_range = bool(args.from_ts or args.to_ts)
     if has_explicit_ids == has_time_range:
-        parser.error("Provide exactly one of --trace-ids OR --from/--to")
+        parser.error(
+            "Provide exactly one of --trace-ids / ids embedded in --contract OR --from/--to"
+        )
     if has_time_range and not (args.from_ts and args.to_ts):
         parser.error("--from and --to must both be provided together")
     if has_time_range and len(args.contract) > 1:
         parser.error("--from/--to time-range mode supports only a single --contract")
+    if has_time_range and has_embedded_ids:
+        parser.error("--from/--to time-range mode doesn't take trace ids embedded in --contract")
 
     init_langfuse_env(args)
 
     if has_explicit_ids:
         try:
-            groups = _resolve_contract_trace_groups(args.contract, args.trace_ids)
+            groups = _resolve_contract_trace_groups(args.contract, args.trace_ids or [])
         except ValueError as exc:
             parser.error(str(exc))
+        empty = [path for path, ids in groups if not ids]
+        if empty:
+            parser.error(f"No trace ids resolved for: {empty}")
         pipelines = [
             ComparisonPipeline(
                 contract=load_contract(contract_path),

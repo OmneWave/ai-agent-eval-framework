@@ -18,13 +18,13 @@ The evaluation engine works in four stages:
 
 3. Plugin-based evaluation
    - Multiple plugins inspect different aspects of the run:
-     - metadata gate
      - intent verification
      - resource coverage
      - tool policy
+     - context grounding
      - file mutability
      - trace health
-     - blocking checks
+     - resource usage
    - Each plugin returns a score, pass/fail result, and evidence.
 
 4. Aggregated reporting
@@ -218,11 +218,16 @@ uv run run-verify --list-plugins
 | `intent_verification` | Expected skill loaded |
 | `resource_coverage` | Resource agents appeared in trace |
 | `tool_policy` | Required/allowed/forbidden tools per resource |
-| `context_grounding` | Whether each resource's reference file(s)/context terms were actually retrieved by a tool call, vs. assumed/hallucinated — and, in the other direction, whether unrelated files were read via `read_files` that don't belong to any resource's declared scope (scope creep). Paths matching the contract's `allowed_context_reads` glob patterns (e.g. platform catalog/reference docs) are exempt from the scope-creep check — reading them is fine, not reading them is fine too |
+| `context_grounding` | Whether each resource's reference file(s)/context terms were actually retrieved by a tool call, vs. assumed/hallucinated — and, in the other direction, whether unrelated files were read via `read_files` that don't belong to any resource's declared scope (scope creep). Paths matching the contract's `allowed_context_reads` glob patterns (e.g. platform catalog/reference docs) are exempt from the scope-creep check — reading them is fine, not reading them is fine too. Declared `context` terms are checked against both a tool call's input *and* its output — a term missing from both is reported as a deviation; each resource's evidence records exactly which side ("input only" / "output only" / "input and output") a found term came from |
 | `file_mutability` | File path and mutability rules |
 | `trace_health` | Errors, trace status |
 | `resource_usage` | Trace duration, total LLM tokens, and total cost (USD) against the contract's declared `budget` |
-| `blocking_checks` | Aggregates contract blocking_checks |
+
+Every plugin reports a full pass/fail breakdown of the named things it evaluated (one entry per resource, skill, metric, etc.), not just a single aggregate score — so both the console and HTML reports show *what* passed and *what* failed, even on a clean run. This is driven by a standard `evidence["checks"]` shape (see `PluginResult` docstring) that any plugin populates; the console/HTML renderers read it generically.
+
+### Blocking checks
+
+`blocking_checks` isn't its own plugin — it's a named boolean each plugin can optionally contribute (e.g. `trace_health` sets `trace_complete`/`diagnostics_clean`/`build_passed`, `resource_coverage` sets `planning_coverage_satisfied`/`planning_order_satisfied`, `file_mutability` sets `no_unrelated_diff`, `resource_usage` sets `duration_within_budget`/`tokens_within_budget`/`cost_within_budget`). Listing a check name under a contract's top-level `blocking_checks:` turns it into a hard pass/fail gate on the overall `passed` result, on top of the weighted score — a check not contributed by any plugin defaults to passing.
 
 ### Declaring a resource budget
 
@@ -259,12 +264,12 @@ uv run compare-traces \
   --out comparison.html
 ```
 
-**2. Several contracts, each with its own trace(s)** — repeat `--contract` and `--trace-ids` in matching order, one pair per contract:
+**2. Several contracts, each with its own trace(s)** — embed each contract's trace ids directly in its own `--contract path.yaml:id1,id2` value, so the (contract, trace ids) association is explicit and self-contained instead of depending on a separate `--trace-ids` list lining up by position:
 
 ```bash
 uv run compare-traces \
-  --contract contracts/binding/binding_with_widget.yaml --trace-ids gpt4-trace,claude-trace \
-  --contract contracts/another_workflow.yaml --trace-ids gpt4-trace-2,claude-trace-2 \
+  --contract contracts/binding/binding_with_widget.yaml:gpt4-trace,claude-trace \
+  --contract contracts/another_workflow.yaml:gpt4-trace-2,claude-trace-2 \
   --out comparison.html
 ```
 

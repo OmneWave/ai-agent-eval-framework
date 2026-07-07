@@ -4,7 +4,6 @@ from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, 
 from wm_agents_validator.models.trace_snapshot import TraceSnapshot
 from wm_agents_validator.models.verification import VerificationReport
 from wm_agents_validator.models.workflow_contract import WorkflowContract
-from wm_agents_validator.plugins.blocking_checks import BlockingChecksPlugin
 from wm_agents_validator.plugins.registry import DEFAULT_PLUGINS, PLUGIN_WEIGHTS, get_plugin
 
 
@@ -14,7 +13,7 @@ def run_plugins(
     plugins: list[str] | None = None,
     context: EvalContext | None = None,
 ) -> VerificationReport:
-    plugin_names = [name for name in (plugins or DEFAULT_PLUGINS) if name != "blocking_checks"]
+    plugin_names = plugins or DEFAULT_PLUGINS
     ctx = context or EvalContext()
     results: list[PluginResult] = []
 
@@ -22,10 +21,11 @@ def run_plugins(
         plugin = get_plugin(name)
         results.append(plugin.evaluate(snapshot, contract, ctx))
 
-    results.append(
-        BlockingChecksPlugin().evaluate(snapshot, contract, ctx, prior_results=results)
-    )
-
+    # Each plugin can contribute named entries to `blocking_checks` (e.g.
+    # trace_health sets "trace_complete", resource_coverage sets
+    # "planning_coverage_satisfied"); merging them here is what lets
+    # `contract.blocking_checks` reference any of them regardless of which
+    # plugin computed it.
     blocking_checks: dict[str, bool] = {}
     all_violations: list[Violation] = []
     weighted_score = 0.0
