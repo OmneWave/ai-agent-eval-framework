@@ -21,18 +21,14 @@ def run_plugins(
         plugin = get_plugin(name)
         results.append(plugin.evaluate(snapshot, contract, ctx))
 
-    # Each plugin can contribute named entries to `blocking_checks` (e.g.
-    # trace_health sets "trace_complete", resource_coverage sets
-    # "planning_coverage_satisfied"); merging them here is what lets
-    # `contract.blocking_checks` reference any of them regardless of which
-    # plugin computed it.
-    blocking_checks: dict[str, bool] = {}
+    # SWE-bench-style binary resolution: any plugin failing fails the run. `overall_score`
+    # (weighted average of plugin scores) is diagnostic only -- see the Scoring section of
+    # the contract schema -- never what decides `passed`.
     all_violations: list[Violation] = []
     weighted_score = 0.0
     weight_total = 0.0
 
     for result in results:
-        blocking_checks.update(result.blocking_checks)
         all_violations.extend(result.violations)
         weight = PLUGIN_WEIGHTS.get(result.plugin, 0.0)
         if weight > 0:
@@ -40,10 +36,7 @@ def run_plugins(
             weight_total += weight
 
     overall_score = weighted_score / weight_total if weight_total else 0.0
-    if contract.blocking_checks:
-        passed = all(blocking_checks.get(c, True) for c in contract.blocking_checks)
-    else:
-        passed = all(r.passed for r in results)
+    passed = all(r.passed for r in results)
 
     return VerificationReport(
         trace_id=snapshot.trace_id,
@@ -51,6 +44,5 @@ def run_plugins(
         passed=passed,
         overall_score=round(overall_score, 4),
         plugin_results=results,
-        blocking_checks=blocking_checks,
         violations=all_violations,
     )

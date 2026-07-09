@@ -1,43 +1,130 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+_PATH_CONVENTIONS = {
+    "api": "services/{name}/designtime/{name}_API.json",
+    "javaservice": "services/{name}/designtime/{name}_API.json",
+    "db": "services/{name}/designtime/{name}_published_dataModel.json",
+    "design_tokens": "src/main/webapp/pages/{name}/{name}.tokens-plan.json",
+    "page": "src/main/webapp/pages/{name}/{name}.html",
+    "variable": "src/main/webapp/pages/{page}/{page}.variables.json",
+    "widget": "src/main/webapp/pages/{page}/{page}.html",
+    "javascript": "src/main/webapp/pages/{page}/{page}.js",
+}
 
-class IntentSpec(BaseModel):
+_FLAT_TYPES = ("api", "javaservice", "db", "design_tokens")
+_PAGE_SUBTYPES = ("variable", "widget", "javascript")
+
+
+def _default_path(type_: str, name: str, page: str | None = None) -> str:
+    return _PATH_CONVENTIONS[type_].format(name=name, page=page)
+
+
+class ResourceEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expected_skill: str | list[str]
-    allowed_skills: list[str] = Field(default_factory=list)
+    name: str
+    path: str | None = None
 
 
-class ToolPolicy(BaseModel):
+class PageEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    path: str | None = None
+    variable: list[ResourceEntry] = Field(default_factory=list)
+    widget: list[ResourceEntry] = Field(default_factory=list)
+    javascript: list[ResourceEntry] = Field(default_factory=list)
+
+
+class ResourceRegistry(BaseModel):
+    """Named registry of real resources -- pure identity (name + optional path override).
+
+    Every entry's ``name`` is copied verbatim from the platform's resource catalog, never
+    invented by a contract author. ``path`` is derived from type + name (+ page name, for
+    page-scoped types) via ``_PATH_CONVENTIONS`` when not explicitly given.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    api: list[ResourceEntry] = Field(default_factory=list)
+    javaservice: list[ResourceEntry] = Field(default_factory=list)
+    db: list[ResourceEntry] = Field(default_factory=list)
+    design_tokens: list[ResourceEntry] = Field(default_factory=list)
+    page: list[PageEntry] = Field(default_factory=list)
+
+    def resolve(self, ref: str) -> tuple[str, list[str]]:
+        """Resolve a dotted reference to (effective_path, qualifier_terms).
+
+        Any reference segments left over after the registry lookup succeeds become
+        qualifier terms, checked like a ``terms`` entry -- see the "References and
+        qualifiers" section of the contract schema.
+        """
+        parts = ref.split(".")
+        if not parts or not parts[0]:
+            raise KeyError(f"malformed resource reference '{ref}'")
+        type_ = parts[0]
+
+        if type_ == "page":
+            if len(parts) < 2:
+                raise KeyError(f"malformed resource reference '{ref}'")
+            page = next((p for p in self.page if p.name == parts[1]), None)
+            if page is None:
+                raise KeyError(f"resource '{ref}' not found: no page named '{parts[1]}'")
+            if len(parts) == 2:
+                return page.path or _default_path("page", page.name), []
+            if len(parts) < 4 or parts[2] not in _PAGE_SUBTYPES:
+                raise KeyError(f"malformed page resource reference '{ref}'")
+            bucket = getattr(page, parts[2])
+            entry = next((e for e in bucket if e.name == parts[3]), None)
+            if entry is None:
+                raise KeyError(f"resource '{ref}' not found in page.{page.name}.{parts[2]}")
+            path = entry.path or _default_path(parts[2], entry.name, page=page.name)
+            return path, parts[4:]
+
+        if type_ in _FLAT_TYPES:
+            if len(parts) < 2:
+                raise KeyError(f"malformed resource reference '{ref}'")
+            bucket = getattr(self, type_)
+            entry = next((e for e in bucket if e.name == parts[1]), None)
+            if entry is None:
+                raise KeyError(f"resource '{ref}' not found in {type_}")
+            path = entry.path or _default_path(type_, entry.name)
+            return path, parts[2:]
+
+        raise KeyError(f"malformed resource reference '{ref}'")
+
+
+class SkillsSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    required: str | list[str]
+    optional: list[str] = Field(default_factory=list)
+
+
+class ReadSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resource: str
+    terms: list[str] = Field(default_factory=list)
+
+
+class WriteSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resource: str
+    operation: Literal["CREATE", "UPDATE", "DELETE"]
+
+
+class ToolsSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     required: list[str] = Field(default_factory=list)
-    allowed: list[str] = Field(default_factory=list)
+    optional: list[str] = Field(default_factory=list)
     forbidden: list[str] = Field(default_factory=list)
-
-
-class FileSpec(BaseModel):
-    path: str
-    mutability: Literal["read_only", "tool_managed", "editable"] = "editable"
-
-
-class ResourceSpec(BaseModel):
-    agent: str
-    skip_if: str | None = None
-    operation: str | None = None
-    context: list[str] = Field(default_factory=list)
-    tools: ToolPolicy = Field(default_factory=ToolPolicy)
-    files: list[FileSpec] = Field(default_factory=list)
-
-
-class BudgetSpec(BaseModel):
-    """Trace-level resource budget. Any field left unset means no limit is enforced."""
-
-    max_duration_ms: int | None = None
-    max_total_tokens: int | None = None
-    max_cost_usd: float | None = None
 
 
 class WorkflowContract(BaseModel):
@@ -45,17 +132,12 @@ class WorkflowContract(BaseModel):
 
     workflow: str
     contract_version: str
-    intent: IntentSpec
-    resources: dict[str, ResourceSpec] = Field(default_factory=dict)
-    # Paths (glob patterns supported) that are always fine to read via read_files
-    # even though no resource declares them as context/target -- e.g. platform
-    # catalog/reference docs an agent legitimately consults while exploring.
-    # Reading them is never required and never counted as "unrelated" scope creep;
-    # not reading them is never penalized either.
-    allowed_context_reads: list[str] = Field(default_factory=list)
-    blocking_checks: list[str] = Field(default_factory=list)
-    slo: dict[str, float] | None = None
-    budget: BudgetSpec | None = None
+    skills: SkillsSpec
+    knowledge: list[str] = Field(default_factory=list)
+    resources: ResourceRegistry = Field(default_factory=ResourceRegistry)
+    input_context: list[ReadSpec] = Field(default_factory=list)
+    output: list[WriteSpec] = Field(default_factory=list)
+    tools: ToolsSpec = Field(default_factory=ToolsSpec)
 
     @property
     def contract_id(self) -> str:

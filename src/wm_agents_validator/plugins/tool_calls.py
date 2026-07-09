@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, Violation, score_from_checks
+from wm_agents_validator.models.trace_snapshot import TraceSnapshot
+from wm_agents_validator.models.workflow_contract import WorkflowContract
+
+
+class ToolCallsPlugin:
+    """Checks the contract-wide ``tools`` policy: every ``required`` tool was
+    used somewhere in the trace, and no ``forbidden`` tool was used anywhere.
+
+    ``tools`` is one flat, global policy (not addressed to any resource) --
+    neither real contract in this repo ever needed a different tool policy
+    per resource, so there's no per-resource scoping here.
+    """
+
+    name = "tool_calls"
+
+    def evaluate(
+        self,
+        snapshot: TraceSnapshot,
+        contract: WorkflowContract,
+        context: EvalContext | None = None,
+    ) -> PluginResult:
+        violations: list[Violation] = []
+        checks: dict[str, dict] = {}
+        policy = contract.tools
+
+        for required_tool in policy.required:
+            used = required_tool in snapshot.tool_names
+            checks[required_tool] = {
+                "passed": used,
+                "detail": "used" if used else "required tool never used",
+            }
+            if not used:
+                violations.append(
+                    Violation(
+                        code="required_tool_missing",
+                        message=f"Required tool '{required_tool}' never used",
+                        plugin=self.name,
+                        evidence={"required": policy.required, "actual_tools": snapshot.tool_names},
+                    )
+                )
+
+        forbidden_used = [tool for tool in policy.forbidden if tool in snapshot.tool_names]
+        forbidden_label = "forbidden tools"
+        if forbidden_used:
+            checks[forbidden_label] = {"passed": False, "detail": f"forbidden tool(s) used: {forbidden_used}"}
+            violations.append(
+                Violation(
+                    code="forbidden_tool_used",
+                    message=f"Forbidden tool(s) used: {forbidden_used}",
+                    plugin=self.name,
+                    evidence={"forbidden": policy.forbidden, "actual_tools": snapshot.tool_names},
+                )
+            )
+        else:
+            checks[forbidden_label] = {"passed": True, "detail": "no forbidden tool used"}
+
+        passed, score = score_from_checks(checks)
+
+        return PluginResult(
+            plugin=self.name,
+            passed=passed,
+            score=score,
+            violations=violations,
+            evidence={"checks": checks},
+        )

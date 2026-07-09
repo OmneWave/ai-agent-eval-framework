@@ -26,7 +26,7 @@ def main() -> None:
     parser.add_argument(
         "--context",
         default="{}",
-        help="Optional. Only for contracts with {page}/{serviceId} placeholders or skip_if rules. Default: none.",
+        help="Optional. Only for path-templating helpers still exposed via EvalContext.bindings. Default: none.",
     )
     parser.add_argument(
         "--plugins",

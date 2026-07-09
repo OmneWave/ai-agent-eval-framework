@@ -148,6 +148,7 @@ _TEMPLATE = """<!DOCTYPE html>
   .heatmap-row-label { text-align: left !important; color: var(--text); font-weight: 600; }
   .heatmap-cell { border-radius: 6px; font-weight: 600; }
   .heatmap-cell.empty-cell { color: var(--muted); font-weight: 400; background: transparent; }
+  .heatmap-cell-detail { font-size: 10px; font-weight: 400; opacity: .75; }
 </style>
 </head>
 <body>
@@ -340,11 +341,18 @@ _TEMPLATE = """<!DOCTYPE html>
           if (!cell) {
             html += `<td class="heatmap-cell empty-cell">—</td>`;
           } else {
+            // Pass rate is the primary, SWE-bench-style resolve-rate metric --
+            // the fraction of runs that fully passed this plugin, aggregated
+            // across many traces (see the contract schema's Scoring section:
+            // no partial credit within one run, cross-model comparison comes
+            // from aggregating binary outcomes over many runs). Average score
+            // is diagnostic-only detail, shown smaller underneath.
             const pct = Math.round(cell.avg * 100);
             const passPct = Math.round(cell.passRate * 100);
-            const title = `${esc(group)} · ${esc(plugin)}: ${pct}% avg score, `
-              + `${passPct}% pass rate across ${cell.count} trace(s)`;
-            html += `<td class="heatmap-cell" style="background:${heatColor(cell.avg)}" title="${title}">${pct}%</td>`;
+            const title = `${esc(group)} · ${esc(plugin)}: ${passPct}% pass rate, `
+              + `${pct}% avg score across ${cell.count} trace(s)`;
+            html += `<td class="heatmap-cell" style="background:${heatColor(cell.passRate)}" title="${title}">`
+              + `${passPct}%<div class="heatmap-cell-detail">${pct}% avg</div></td>`;
           }
         }
         html += '</tr>';
@@ -476,13 +484,13 @@ _TEMPLATE = """<!DOCTYPE html>
     function detailRowHtml(row) {
       const pluginsHtml = (row.plugin_scores || []).map(p => {
         const tier = pluginTierClass(p);
-        // Plugins that evaluate several named things (e.g. context_grounding's
+        // Plugins that evaluate several named things (e.g. input_context's
         // per-resource checks) report each one's outcome in `checks`, pass or
         // fail, so the drill-down shows the full breakdown even on a clean
         // pass -- not just an empty section. A violation whose `resource`
         // matches a check's label is just that check's failure reason and is
         // skipped below to avoid printing it twice; violations that aren't
-        // tied to any single check (e.g. context_grounding's unrelated-reads
+        // tied to any single check (e.g. input_context's unrelated-reads
         // warning) must still be shown, or a score drop below 100% would have
         // no visible explanation even though every check line is green.
         const checkLabels = new Set((p.checks || []).map(c => c.label));

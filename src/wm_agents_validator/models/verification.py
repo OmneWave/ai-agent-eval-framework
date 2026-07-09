@@ -10,5 +10,4 @@ class VerificationReport(BaseModel):
     passed: bool
     overall_score: float
     plugin_results: list[PluginResult] = Field(default_factory=list)
-    blocking_checks: dict[str, bool] = Field(default_factory=dict)
     violations: list[Violation] = Field(default_factory=list)

@@ -36,11 +36,6 @@ def print_console_report(report: VerificationReport) -> None:
     print("\n--- Plugin Results ---")
     for pr in report.plugin_results:
         _print_plugin_result(pr)
-    if report.blocking_checks:
-        print("\n--- Blocking Checks ---")
-        for check, ok in report.blocking_checks.items():
-            tier = "green" if ok else "red"
-            print(f"  [{_paint(tier, 'PASS' if ok else 'FAIL')}] {check}")
     if report.violations:
         violations_tier = "red" if not report.passed else "yellow"
         print(f"\n{_paint(violations_tier, f'Total violations: {len(report.violations)}')}")

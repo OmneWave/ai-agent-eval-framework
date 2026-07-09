@@ -40,4 +40,18 @@ class PluginResult(BaseModel):
     score: float
     violations: list[Violation] = Field(default_factory=list)
     evidence: dict = Field(default_factory=dict)
-    blocking_checks: dict[str, bool] = Field(default_factory=dict)
+
+
+def score_from_checks(checks: dict[str, dict]) -> tuple[bool, float]:
+    """Derive (passed, score) from an ``evidence["checks"]`` map.
+
+    Modeled on SWE-bench-style binary resolution: every declared check must hold for
+    ``passed`` -- no partial credit, no hard/soft split. ``score`` is the pass ratio over
+    the same map, kept only as diagnostic detail (never used to decide ``passed`` or to
+    rank/compare models -- see the Scoring section of the contract schema).
+    """
+    if not checks:
+        return True, 1.0
+    passed_count = sum(1 for c in checks.values() if c.get("passed"))
+    total = len(checks)
+    return passed_count == total, passed_count / total

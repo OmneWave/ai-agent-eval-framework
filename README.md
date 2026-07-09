@@ -188,10 +188,6 @@ TRACE_ID=c4739a2868e2b7aca6430aeae2f7ea0a uv run run-verify \
   --contract contracts/binding/binding_with_widget.yaml
 ```
 
-### Optional: `--context`
-
-You do **not** need `--context` for normal runs. It is only for advanced contracts that use path placeholders like `{page}` or `{serviceId}` in file rules. Without it, path matching uses wildcards from the trace's actual file changes.
-
 Alternative trace lookup (if you don't have trace ID):
 
 ```bash
@@ -205,49 +201,118 @@ Other options:
 uv run run-verify \
   --contract contracts/binding/binding_with_widget.yaml \
   --snapshot tests/fixtures/trace_snapshot.json \
-  --plugins intent_verification,tool_policy
+  --plugins skills_loaded,tool_calls
 
 # List plugins
 uv run run-verify --list-plugins
 ```
 
+## Contract schema
+
+Full field-by-field reference, possible values, and rationale: [docs/CONTRACT_SPEC.md](docs/CONTRACT_SPEC.md). Summary below.
+
+A contract has three top-level sections plus a resource registry:
+
+```yaml
+workflow: string                    # required
+contract_version: string            # required
+
+skills:
+  required: string | [string]         # skill(s) that must load and succeed
+  optional: [string]                  # may or may not load; never required, never flagged as extra
+
+knowledge: [string]                 # proprietary/catalog reference paths -- always fine to read,
+                                     # never required, never penalized either way
+
+resources:                          # named registry -- pure identity (name + optional path override)
+  api: [{name: string, path: string}]
+  javaservice: [{name: string, path: string}]
+  db: [{name: string, path: string}]
+  design_tokens: [{name: string, path: string}]
+  page:
+    - name: string
+      path: string
+      variable: [{name: string, path: string}]
+      widget: [{name: string, path: string}]
+      javascript: [{name: string, path: string}]
+
+input_context:                      # every entry means "must be READ somewhere in the trace"
+  - resource: string                  # dotted reference, e.g. "api.hrdb" or "api.hrdb.VacationController_getVacation"
+    terms: [string]                     # extra ids/keywords that must appear in some tool call's input/output
+
+output:                             # every entry means "must be CREATED/UPDATED/DELETED"
+  - resource: string
+    operation: CREATE | UPDATE | DELETE
+
+tools:                               # one flat, contract-wide tool policy
+  required: [string]
+  optional: [string]
+  forbidden: [string]
+```
+
+**Resource names are never invented.** Every `name` under `resources` is copied verbatim from the
+platform's real resource catalog (a service id, a page name, a variable/widget/javascript name) —
+never an alias made up by whoever writes the contract, so two people referencing the same resource
+always write the identical entry.
+
+**Paths are derived, not typed, by default.** `path` is optional on every registry entry — when
+omitted, it's computed from the resource's type + name (+ page name, for page-scoped types) via a
+fixed convention built from the real WaveMaker project layout:
+
+| Type | Convention |
+|---|---|
+| `api` | `services/{name}/designtime/{name}_API.json` |
+| `javaservice` | `services/{name}/designtime/{name}_API.json` |
+| `db` | `services/{name}/designtime/{name}_published_dataModel.json` |
+| `design_tokens` | `src/main/webapp/pages/{name}/{name}.tokens-plan.json` |
+| `page` | `src/main/webapp/pages/{name}/{name}.html` |
+| `page.*.variable` | `src/main/webapp/pages/{page}/{page}.variables.json` |
+| `page.*.widget` | same file as the page itself (widgets are markup inside it) |
+| `page.*.javascript` | `src/main/webapp/pages/{page}/{page}.js` |
+
+An explicit `path:` overrides this — needed for anything off-convention, like `javaservice`'s real
+Java source (package-path, not name-only) or a custom query/procedure/token-override file.
+
+**References carry qualifiers.** `input_context[].resource` / `output[].resource` are dotted
+strings resolved against `resources`. Any segments left over *after* the registry lookup succeeds
+become qualifier terms, checked exactly like a `terms` entry (substring match in a tool call's
+input or output, anywhere in the trace) — this is what lets `api.hrdb.VacationController_getVacation`
+assert both "the hrdb API file was read" *and* "that specific operation showed up somewhere",
+without a separate `operationId`/`class`+`method`/`table_name`+`column_name` field per type.
+
 ## Plugins
 
 | Plugin | Checks |
 |--------|--------|
-| `intent_verification` | Expected skill loaded |
-| `resource_coverage` | Resource agents appeared in trace |
-| `tool_policy` | Required/allowed/forbidden tools per resource |
-| `context_grounding` | Whether each resource's reference file(s)/context terms were actually retrieved by a tool call, vs. assumed/hallucinated — and, in the other direction, whether unrelated files were read via `read_files` that don't belong to any resource's declared scope (scope creep). Paths matching the contract's `allowed_context_reads` glob patterns (e.g. platform catalog/reference docs) are exempt from the scope-creep check — reading them is fine, not reading them is fine too. Declared `context` terms are checked against both a tool call's input *and* its output — a term missing from both is reported as a deviation; each resource's evidence records exactly which side ("input only" / "output only" / "input and output") a found term came from |
-| `file_mutability` | File path and mutability rules |
-| `trace_health` | Errors, trace status |
-| `resource_usage` | Trace duration, total LLM tokens, and total cost (USD) against the contract's declared `budget` |
+| `skills_loaded` | Required skill(s) loaded and succeeded, no extras beyond `required`/`optional` |
+| `input_context` | Whether each `input_context[]` entry's resolved resource was actually read by a tool call (vs. assumed/hallucinated), and whether its `terms` + any qualifier terms parsed from the reference (from both `input_context` and `output`) showed up in some tool call's input or output — and, in the other direction, whether unrelated files were read via `read_files` that don't belong to `knowledge` or any declared resource (scope creep) |
+| `tool_calls` | The contract-wide `tools` policy: every `required` tool used somewhere in the trace, no `forbidden` tool used anywhere |
+| `output` | Whether each `output[]` entry's resolved resource was created/updated/deleted as declared, and whether anything changed outside the declared `output` scope (a resource never listed under `output` is automatically protected by this check) |
+| `trace_health` | Errors, trace status, and (when a `javaservice`-typed resource is in `output`) build success |
+| `resource_usage` | Reports trace duration, total LLM tokens, and total cost (USD) — purely observational, never scores or fails (there's no contract-declared budget to check against) |
 
-Every plugin reports a full pass/fail breakdown of the named things it evaluated (one entry per resource, skill, metric, etc.), not just a single aggregate score — so both the console and HTML reports show *what* passed and *what* failed, even on a clean run. This is driven by a standard `evidence["checks"]` shape (see `PluginResult` docstring) that any plugin populates; the console/HTML renderers read it generically.
+Every plugin reports a full pass/fail breakdown of the named things it evaluated (one entry per resource, skill, tool, etc.), not just a single aggregate score — so both the console and HTML reports show *what* passed and *what* failed, even on a clean run. This is driven by a standard `evidence["checks"]` shape (see `PluginResult` docstring) that any plugin populates; the console/HTML renderers read it generically.
 
-### Blocking checks
+### Scoring
 
-`blocking_checks` isn't its own plugin — it's a named boolean each plugin can optionally contribute (e.g. `trace_health` sets `trace_complete`/`diagnostics_clean`/`build_passed`, `resource_coverage` sets `planning_coverage_satisfied`/`planning_order_satisfied`, `file_mutability` sets `no_unrelated_diff`, `resource_usage` sets `duration_within_budget`/`tokens_within_budget`/`cost_within_budget`). Listing a check name under a contract's top-level `blocking_checks:` turns it into a hard pass/fail gate on the overall `passed` result, on top of the weighted score — a check not contributed by any plugin defaults to passing.
+Modeled on SWE-bench-style binary resolution, not partial credit: **every declared check in a
+plugin must pass for that plugin's `passed=True`** — no hard/soft split, no violation that "just
+dilutes the score." `score` is still computed (the pass ratio over that plugin's checks) but is
+diagnostic detail only, never what decides `passed` and never what should be used to rank/compare
+models. A run's overall `passed` is `all(plugin.passed for plugin in results)` — one failing
+plugin fails the run, same as any required test failing fails a SWE-bench instance.
 
-### Declaring a resource budget
-
-Add an optional `budget` block to a contract to enforce duration/token/cost limits:
-
-```yaml
-budget:
-  max_duration_ms: 60000
-  max_total_tokens: 20000
-  max_cost_usd: 0.50
-```
-
-Any field left out means that metric isn't checked. A metric is also skipped (not scored, not violated) if the trace has no data for it — e.g. Langfuse didn't return usage/cost. To make a specific metric a hard failure, add its blocking check name (`duration_within_budget`, `tokens_within_budget`, `cost_within_budget`) to `blocking_checks`.
+The actual benchmark number for comparing models is the **pass rate** across many runs — the
+fraction of (contract, model) verification runs that fully passed — which is what
+`compare-traces`'s heatmap leads with (see below). Nuance for cross-model comparison comes from
+aggregating binary outcomes over many runs, not from softening any single run's outcome.
 
 ## Comparing multiple traces (HTML report)
 
 `compare-traces` verifies a batch of traces — optionally across several contracts and several LLMs at once — and renders a single self-contained HTML report:
 
 - Sortable table with Contract, Model, User, Agent, Duration, Tokens, Cost, Score, Status, and a per-plugin status "dot strip" for an at-a-glance view of every plugin's pass/fail.
-- A **plugin score heatmap**, toggleable between "group by Model" and "group by Contract" — average score + pass rate per plugin per group, so you can immediately see e.g. "which model is weakest on `context_grounding`" or "which contract has the most `tool_policy` violations".
+- A **plugin pass-rate heatmap**, toggleable between "group by Model" and "group by Contract" — pass rate (primary) + average score (secondary, diagnostic-only) per plugin per group, so you can immediately see e.g. "which model is weakest on `input_context`" or "which contract has the most `tool_calls` violations".
 - Contract / Model / Status filters + free-text search, all live-updating the table, summary cards, and heatmap together.
 - Per-trace drill-down (click a row) with full plugin scores, violations, and per-generation token/cost breakdown.
 
