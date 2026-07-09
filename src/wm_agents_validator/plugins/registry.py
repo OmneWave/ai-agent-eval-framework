@@ -1,40 +1,38 @@
 from __future__ import annotations
 
 from wm_agents_validator.plugins.base import EvaluatorPlugin
-from wm_agents_validator.plugins.context_grounding import ContextGroundingPlugin
-from wm_agents_validator.plugins.file_mutability import FileMutabilityPlugin
-from wm_agents_validator.plugins.intent_verification import IntentVerificationPlugin
-from wm_agents_validator.plugins.resource_coverage import ResourceCoveragePlugin
+from wm_agents_validator.plugins.input_context import InputContextPlugin
+from wm_agents_validator.plugins.output import OutputPlugin
 from wm_agents_validator.plugins.resource_usage import ResourceUsagePlugin
-from wm_agents_validator.plugins.tool_policy import ToolPolicyPlugin
+from wm_agents_validator.plugins.skills_loaded import SkillsLoadedPlugin
+from wm_agents_validator.plugins.tool_calls import ToolCallsPlugin
 from wm_agents_validator.plugins.trace_health import TraceHealthPlugin
 
 DEFAULT_PLUGINS = [
-    "intent_verification",
-    "resource_coverage",
-    "tool_policy",
-    "context_grounding",
-    "file_mutability",
+    "skills_loaded",
+    "tool_calls",
+    "input_context",
+    "output",
     "trace_health",
     "resource_usage",
 ]
 
+# `resource_usage` is deliberately absent -- it runs (via DEFAULT_PLUGINS) and
+# populates evidence but never affects `overall_score`, since it's purely
+# observational (see the Scoring section of the contract schema).
 PLUGIN_WEIGHTS: dict[str, float] = {
-    "intent_verification": 0.15,
-    "resource_coverage": 0.15,
-    "tool_policy": 0.15,
-    "context_grounding": 0.15,
-    "file_mutability": 0.15,
-    "trace_health": 0.10,
-    "resource_usage": 0.05,
+    "skills_loaded": 0.15,
+    "tool_calls": 0.15,
+    "input_context": 0.25,
+    "output": 0.25,
+    "trace_health": 0.20,
 }
 
 _PLUGIN_CLASSES: dict[str, type] = {
-    "intent_verification": IntentVerificationPlugin,
-    "resource_coverage": ResourceCoveragePlugin,
-    "tool_policy": ToolPolicyPlugin,
-    "context_grounding": ContextGroundingPlugin,
-    "file_mutability": FileMutabilityPlugin,
+    "skills_loaded": SkillsLoadedPlugin,
+    "tool_calls": ToolCallsPlugin,
+    "input_context": InputContextPlugin,
+    "output": OutputPlugin,
     "trace_health": TraceHealthPlugin,
     "resource_usage": ResourceUsagePlugin,
 }

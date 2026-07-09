@@ -19,7 +19,7 @@ def test_prints_check_lines_for_passing_plugin(capsys):
     report = _report(
         plugin_results=[
             PluginResult(
-                plugin="context_grounding",
+                plugin="input_context",
                 passed=True,
                 score=1.0,
                 evidence={
@@ -46,7 +46,7 @@ def test_prints_check_lines_for_failing_plugin_without_duplicating_violation(cap
         overall_score=0.5,
         plugin_results=[
             PluginResult(
-                plugin="context_grounding",
+                plugin="input_context",
                 passed=False,
                 score=0.5,
                 evidence={
@@ -62,13 +62,13 @@ def test_prints_check_lines_for_failing_plugin_without_duplicating_violation(cap
                     Violation(
                         code="context_path_not_retrieved",
                         message="apiservice never retrieved",
-                        plugin="context_grounding",
+                        plugin="input_context",
                         resource="apiservice",
                     ),
                     Violation(
                         code="unrelated_context_fetched",
                         message="extra file read",
-                        plugin="context_grounding",
+                        plugin="input_context",
                     ),
                 ],
             )
@@ -90,7 +90,7 @@ def test_prints_check_lines_for_failing_plugin_without_duplicating_violation(cap
 def test_prints_check_lines_for_resource_usage_budget_metrics(capsys):
     # resource_usage populates the same generic evidence["checks"] contract
     # for its budgeted metrics (duration/tokens/cost), so it gets the same
-    # "show what passed too" treatment as context_grounding, for free.
+    # "show what passed too" treatment as input_context, for free.
     report = _report(
         passed=False,
         overall_score=0.5,
@@ -130,14 +130,14 @@ def test_prints_plain_violations_for_plugins_without_checks_evidence(capsys):
         passed=True,
         plugin_results=[
             PluginResult(
-                plugin="intent_verification",
+                plugin="skills_loaded",
                 passed=True,
                 score=0.9,
                 violations=[
                     Violation(
                         code="extra_skill_loaded",
                         message="loaded an extra skill",
-                        plugin="intent_verification",
+                        plugin="skills_loaded",
                     )
                 ],
             )

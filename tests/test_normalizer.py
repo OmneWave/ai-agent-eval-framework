@@ -14,8 +14,8 @@ FULL_RAW_TRACE = Path(__file__).parent.parent / "trace-artifacts" / "c4739a2868e
 
 def test_load_contract(contract):
     assert contract.workflow == "ui_to_api_binding"
-    assert contract.intent.expected_skill[0] == "ui_to_api_binding_workflow"
-    assert "apiservice" in contract.resources
+    assert contract.skills.required[0] == "ui_to_api_binding_workflow"
+    assert contract.resources.api[0].name == "petstore"
 
 
 def test_normalizer_includes_agent_and_chain_spans():

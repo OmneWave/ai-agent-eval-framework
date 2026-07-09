@@ -196,6 +196,24 @@
       "note": null
     },
     {
+      "id": "span-variable-write",
+      "name": "edit_file_content",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:11Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "file_path": "src/main/webapp/pages/PetTable/PetTable.variables.json",
+        "operationId": "petstore_findPetsByTags"
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
       "id": "span-edit-html",
       "name": "write_file",
       "type": "TOOL",

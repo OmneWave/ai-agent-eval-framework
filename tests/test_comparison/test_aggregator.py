@@ -11,16 +11,16 @@ def _verify_result(snapshot, *, passed=True, score=1.0):
         passed=passed,
         overall_score=score,
         plugin_results=[
-            PluginResult(plugin="intent_verification", passed=True, score=1.0),
+            PluginResult(plugin="skills_loaded", passed=True, score=1.0),
             PluginResult(
-                plugin="context_grounding",
+                plugin="input_context",
                 passed=passed,
                 score=score,
                 violations=[
                     Violation(
                         code="context_path_not_retrieved",
                         message="missing path",
-                        plugin="context_grounding",
+                        plugin="input_context",
                     )
                 ],
             ),
@@ -29,7 +29,7 @@ def _verify_result(snapshot, *, passed=True, score=1.0):
             Violation(
                 code="context_path_not_retrieved",
                 message="missing path",
-                plugin="context_grounding",
+                plugin="input_context",
             )
         ]
         if not passed
@@ -53,7 +53,7 @@ def test_build_comparison_report_success_row_captures_metrics(snapshot):
     assert row.user_id == "alice"
     assert row.overall_score == 1.0
     assert row.passed is True
-    assert {p.plugin for p in row.plugin_scores} == {"intent_verification", "context_grounding"}
+    assert {p.plugin for p in row.plugin_scores} == {"skills_loaded", "input_context"}
 
 
 def test_build_comparison_report_uses_custom_user_id_key(snapshot):
@@ -76,12 +76,12 @@ def test_build_comparison_report_captures_violations_and_failure(snapshot):
     assert row.passed is False
     assert row.violation_count == 1
 
-    context_grounding = next(p for p in row.plugin_scores if p.plugin == "context_grounding")
-    assert [v.code for v in context_grounding.violations] == ["context_path_not_retrieved"]
-    assert context_grounding.violations[0].message == "missing path"
+    input_context = next(p for p in row.plugin_scores if p.plugin == "input_context")
+    assert [v.code for v in input_context.violations] == ["context_path_not_retrieved"]
+    assert input_context.violations[0].message == "missing path"
 
-    intent_verification = next(p for p in row.plugin_scores if p.plugin == "intent_verification")
-    assert intent_verification.violations == []
+    skills_loaded = next(p for p in row.plugin_scores if p.plugin == "skills_loaded")
+    assert skills_loaded.violations == []
 
 
 def test_build_comparison_report_error_row_for_failed_fetch():
@@ -108,7 +108,7 @@ def test_build_comparison_report_extracts_checks_when_passing(snapshot):
         overall_score=1.0,
         plugin_results=[
             PluginResult(
-                plugin="context_grounding",
+                plugin="input_context",
                 passed=True,
                 score=1.0,
                 evidence={
@@ -126,13 +126,13 @@ def test_build_comparison_report_extracts_checks_when_passing(snapshot):
 
     report = build_comparison_report("test-contract", [outcome])
 
-    context_grounding = report.rows[0].plugin_scores[0]
-    assert context_grounding.violations == []
-    assert {c.label: c.passed for c in context_grounding.checks} == {
+    input_context = report.rows[0].plugin_scores[0]
+    assert input_context.violations == []
+    assert {c.label: c.passed for c in input_context.checks} == {
         "apiservice": True,
         "widget": True,
     }
-    assert all(c.detail == "context fully grounded" for c in context_grounding.checks)
+    assert all(c.detail == "context fully grounded" for c in input_context.checks)
 
 
 def test_build_comparison_report_extracts_checks_when_failing(snapshot):
@@ -143,7 +143,7 @@ def test_build_comparison_report_extracts_checks_when_failing(snapshot):
         overall_score=0.5,
         plugin_results=[
             PluginResult(
-                plugin="context_grounding",
+                plugin="input_context",
                 passed=False,
                 score=0.5,
                 evidence={
@@ -161,8 +161,8 @@ def test_build_comparison_report_extracts_checks_when_failing(snapshot):
 
     report = build_comparison_report("test-contract", [outcome])
 
-    context_grounding = report.rows[0].plugin_scores[0]
-    checks_by_label = {c.label: c for c in context_grounding.checks}
+    input_context = report.rows[0].plugin_scores[0]
+    checks_by_label = {c.label: c for c in input_context.checks}
     assert checks_by_label["apiservice"].passed is False
     assert checks_by_label["apiservice"].detail == "expected file(s) never retrieved"
     assert checks_by_label["widget"].passed is True
@@ -172,7 +172,7 @@ def test_build_comparison_report_carries_violation_resource_for_dedup(snapshot):
     # A violation's `resource` must survive into PluginViolation so renderers
     # can tell "this violation explains that check" (dedup) apart from
     # "this violation isn't covered by any single check" (must still show,
-    # e.g. context_grounding's unrelated-reads scope-creep warning even when
+    # e.g. input_context's unrelated-reads scope-creep warning even when
     # every per-resource check is green).
     report_obj = VerificationReport(
         trace_id=snapshot.trace_id,
@@ -181,14 +181,14 @@ def test_build_comparison_report_carries_violation_resource_for_dedup(snapshot):
         overall_score=0.82,
         plugin_results=[
             PluginResult(
-                plugin="context_grounding",
+                plugin="input_context",
                 passed=True,
                 score=0.82,
                 violations=[
                     Violation(
                         code="unrelated_context_fetched",
                         message="File(s) read that aren't declared as context/target for any resource",
-                        plugin="context_grounding",
+                        plugin="input_context",
                         resource="unrelated reads",
                     )
                 ],
@@ -207,9 +207,9 @@ def test_build_comparison_report_carries_violation_resource_for_dedup(snapshot):
 
     report = build_comparison_report("test-contract", [outcome])
 
-    context_grounding = report.rows[0].plugin_scores[0]
-    assert context_grounding.violations[0].resource == "unrelated reads"
-    assert {c.label for c in context_grounding.checks} == {"apiservice", "unrelated reads"}
+    input_context = report.rows[0].plugin_scores[0]
+    assert input_context.violations[0].resource == "unrelated reads"
+    assert {c.label for c in input_context.checks} == {"apiservice", "unrelated reads"}
 
 
 def test_build_comparison_report_mixes_success_and_error_rows(snapshot):

@@ -27,7 +27,7 @@ def test_render_embeds_valid_json_data_block():
                 model_name="gpt-4",
                 overall_score=1.0,
                 passed=True,
-                plugin_scores=[PluginScore(plugin="intent_verification", passed=True, score=1.0)],
+                plugin_scores=[PluginScore(plugin="skills_loaded", passed=True, score=1.0)],
             ),
             ComparisonRow(trace_id="trace-2", status="error", error_message="timeout"),
         ],
@@ -54,7 +54,7 @@ def test_render_escapes_closing_script_tags_in_data():
                 trace_id="trace-1",
                 plugin_scores=[
                     PluginScore(
-                        plugin="context_grounding",
+                        plugin="input_context",
                         passed=False,
                         score=0.0,
                         violations=[
@@ -91,7 +91,7 @@ def test_render_embeds_violation_resource_for_client_side_dedup():
                 trace_id="trace-1",
                 plugin_scores=[
                     PluginScore(
-                        plugin="context_grounding",
+                        plugin="input_context",
                         passed=True,
                         score=0.82,
                         violations=[
@@ -125,7 +125,7 @@ def test_render_includes_heatmap_and_contract_data_for_multi_contract_report():
                 model_name="gpt-4",
                 overall_score=1.0,
                 passed=True,
-                plugin_scores=[PluginScore(plugin="intent_verification", passed=True, score=1.0)],
+                plugin_scores=[PluginScore(plugin="skills_loaded", passed=True, score=1.0)],
             )
         ],
     )
@@ -138,7 +138,7 @@ def test_render_includes_heatmap_and_contract_data_for_multi_contract_report():
                 model_name="claude",
                 overall_score=0.5,
                 passed=False,
-                plugin_scores=[PluginScore(plugin="intent_verification", passed=False, score=0.5)],
+                plugin_scores=[PluginScore(plugin="skills_loaded", passed=False, score=0.5)],
             )
         ],
     )

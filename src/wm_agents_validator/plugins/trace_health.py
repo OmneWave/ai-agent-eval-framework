@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from wm_agents_validator.contracts.expressions import evaluate_skip_if
-from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, Violation
+from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, Violation, score_from_checks
 from wm_agents_validator.models.trace_snapshot import TraceSnapshot, _span_base_name
 from wm_agents_validator.models.workflow_contract import WorkflowContract
 
@@ -15,7 +14,6 @@ class TraceHealthPlugin:
         contract: WorkflowContract,
         context: EvalContext | None = None,
     ) -> PluginResult:
-        ctx = context or EvalContext()
         violations: list[Violation] = []
         checks: dict[str, dict] = {}
 
@@ -50,10 +48,7 @@ class TraceHealthPlugin:
             else {"passed": True, "detail": "no error spans"}
         )
 
-        javaservice_active = (
-            "javaservice" in contract.resources
-            and not evaluate_skip_if(contract.resources["javaservice"].skip_if, ctx)
-        )
+        javaservice_active = any(write.resource.split(".")[0] == "javaservice" for write in contract.output)
         build_passed = True
         if javaservice_active:
             build_label = "build"
@@ -76,22 +71,11 @@ class TraceHealthPlugin:
             else:
                 checks[build_label] = {"passed": True, "detail": "platform_compile succeeded"}
 
-        blocking: dict[str, bool] = {}
-        if "trace_complete" in contract.blocking_checks:
-            blocking["trace_complete"] = snapshot.status != "error" and not snapshot.errors
-        if "diagnostics_clean" in contract.blocking_checks:
-            blocking["diagnostics_clean"] = not any(
-                err.message and "validation" in err.message.lower() for err in snapshot.errors
-            )
-        if "build_passed" in contract.blocking_checks:
-            blocking["build_passed"] = build_passed if javaservice_active else True
-
-        penalty = min(1.0, len(violations) * 0.2)
-        score = max(0.0, 1.0 - penalty)
+        passed, score = score_from_checks(checks)
 
         return PluginResult(
             plugin=self.name,
-            passed=len(violations) == 0,
+            passed=passed,
             score=score,
             violations=violations,
             evidence={
@@ -100,5 +84,4 @@ class TraceHealthPlugin:
                 "failed_tools": len(snapshot.tools_summary.failed),
                 "checks": checks,
             },
-            blocking_checks=blocking,
         )

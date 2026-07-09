@@ -32,8 +32,8 @@ class PluginViolation(BaseModel):
     """Matches a `PluginCheck.label` when this violation explains that specific
     check's failure (e.g. one resource, one budgeted metric) -- lets renderers
     avoid printing the same failure reason twice. `None` for violations that
-    aren't about any single named check (e.g. context_grounding's
-    unrelated-reads scope-creep warning, which spans all resources)."""
+    aren't about any single named check (e.g. input_context's unrelated-reads
+    scope-creep warning, which spans all resources)."""
 
 
 class PluginCheck(BaseModel):
