@@ -35,6 +35,12 @@ def add_langfuse_args(parser: argparse.ArgumentParser) -> None:
         metavar="URL",
         help="Langfuse base URL (or set LANGFUSE_BASE_URL)",
     )
+    group.add_argument(
+        "--langfuse-environment",
+        dest="langfuse_environment",
+        metavar="ENV",
+        help="Langfuse environment to filter by (or set LANGFUSE_ENVIRONMENT, default: default)",
+    )
 
 
 def init_langfuse_env(args: argparse.Namespace | None = None) -> None:
@@ -53,6 +59,7 @@ def _apply_cli_overrides(args: argparse.Namespace) -> None:
         "langfuse_secret_key": "LANGFUSE_SECRET_KEY",
         "langfuse_public_key": "LANGFUSE_PUBLIC_KEY",
         "langfuse_base_url": "LANGFUSE_BASE_URL",
+        "langfuse_environment": "LANGFUSE_ENVIRONMENT",
     }
     for attr, env_key in mapping.items():
         value = getattr(args, attr, None)
@@ -68,3 +75,7 @@ def require_langfuse_env() -> None:
             + ", ".join(missing)
             + "\nPass as shell env vars, --langfuse-* flags, or in .env/.env.local"
         )
+
+
+def get_langfuse_environment() -> str:
+    return os.environ.get("LANGFUSE_ENVIRONMENT") or "default"

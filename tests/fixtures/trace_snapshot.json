@@ -83,7 +83,7 @@
       "start_new_conversation_with_agent",
       "read_files",
       "start_new_conversation_with_agent",
-      "execute_tool",
+      "ui_createApiAwareVariable",
       "write_file"
     ],
     "success": [
@@ -91,7 +91,7 @@
       "start_new_conversation_with_agent",
       "read_files",
       "start_new_conversation_with_agent",
-      "execute_tool",
+      "ui_createApiAwareVariable",
       "write_file"
     ],
     "failed": []
@@ -177,7 +177,7 @@
     },
     {
       "id": "span-create-var",
-      "name": "execute_tool",
+      "name": "ui_createApiAwareVariable",
       "type": "TOOL",
       "parent_id": "span-deleg-ui",
       "agent_id": "wm_ui_expert",
@@ -185,7 +185,6 @@
       "end_time": null,
       "level": "DEFAULT",
       "input": {
-        "tool": "ui_createApiAwareVariable",
         "path": "src/main/webapp/pages/PetTable/PetTable.variables.json",
         "service": "petstore",
         "operationId": "petstore_findPetsByTags"

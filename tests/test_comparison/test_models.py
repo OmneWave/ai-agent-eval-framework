@@ -28,3 +28,51 @@ def test_filtered_by_model_is_case_insensitive_and_returns_new_report():
 def test_row_is_error_property():
     assert _row("1", None).is_error is False
     assert ComparisonRow(trace_id="1", status="error").is_error is True
+
+
+def test_filtered_by_user_prompt_is_case_insensitive_substring_match():
+    report = ComparisonReport(
+        contract_id="c",
+        rows=[
+            ComparisonRow(trace_id="1", user_prompt="Bind widget in PetTable to findByTags endpoint"),
+            ComparisonRow(trace_id="2", user_prompt="Create a CustomerTable page"),
+            ComparisonRow(trace_id="3", user_prompt=None),
+        ],
+    )
+
+    filtered = report.filtered_by_user_prompt("findbytags")
+
+    assert [r.trace_id for r in filtered.rows] == ["1"]
+    assert len(report.rows) == 3  # original untouched
+
+
+def test_filtered_by_user_prompt_excludes_rows_with_no_prompt():
+    report = ComparisonReport(contract_id="c", rows=[ComparisonRow(trace_id="1", user_prompt=None)])
+
+    filtered = report.filtered_by_user_prompt("anything")
+
+    assert filtered.rows == []
+
+
+def test_filtered_by_skill_name_is_case_insensitive_substring_match():
+    report = ComparisonReport(
+        contract_id="c",
+        rows=[
+            ComparisonRow(trace_id="1", skill_names=["ui_to_api_binding_workflow", "explore-api"]),
+            ComparisonRow(trace_id="2", skill_names=["screenshot-to-wavemaker-web"]),
+            ComparisonRow(trace_id="3", skill_names=[]),
+        ],
+    )
+
+    filtered = report.filtered_by_skill_name("API_BINDING")
+
+    assert [r.trace_id for r in filtered.rows] == ["1"]
+    assert len(report.rows) == 3  # original untouched
+
+
+def test_filtered_by_skill_name_excludes_rows_with_no_skills():
+    report = ComparisonReport(contract_id="c", rows=[ComparisonRow(trace_id="1", skill_names=[])])
+
+    filtered = report.filtered_by_skill_name("anything")
+
+    assert filtered.rows == []

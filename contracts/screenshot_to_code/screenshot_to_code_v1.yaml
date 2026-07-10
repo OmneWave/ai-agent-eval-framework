@@ -60,5 +60,5 @@ output:
 
 tools:
   required: [platform_createWebPage, platform_listPages, ui_createNonApiAwareVariable, write_file]
-  optional: [platform_getSessionResource, find_files_by_glob, load_skill, start_new_conversation_with_agent, ui_getPageScreenshot, read_files, edit_file_content, create_variable]
+  optional: [platform_getSessionResource, find_files_by_glob, load_skill, start_new_conversation_with_agent, ui_getPageScreenshot, read_files, edit_file_content]
   forbidden: [delete_file]

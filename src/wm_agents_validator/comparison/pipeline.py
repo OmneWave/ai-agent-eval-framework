@@ -35,6 +35,8 @@ class ComparisonPipeline:
     source: TraceSource
     user_id_key: str = "user_id"
     model_filter: str | None = None
+    user_prompt_filter: str | None = None
+    skill_name_filter: str | None = None
     retries: int = 12
     delay_sec: float = 1.0
     evaluate: EvaluateFn | None = None
@@ -58,4 +60,8 @@ class ComparisonPipeline:
         )
         if self.model_filter:
             report = report.filtered_by_model(self.model_filter)
+        if self.user_prompt_filter:
+            report = report.filtered_by_user_prompt(self.user_prompt_filter)
+        if self.skill_name_filter:
+            report = report.filtered_by_skill_name(self.skill_name_filter)
         return report

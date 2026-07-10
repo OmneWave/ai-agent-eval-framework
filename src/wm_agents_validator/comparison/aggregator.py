@@ -80,6 +80,7 @@ def _row_from_success(outcome: TraceOutcome, *, contract_id: str, user_id_key: s
         )
         for g in snapshot.generations
     ]
+    skill_names = [name for load in snapshot.skill_loads for name in load.skill_names]
 
     return ComparisonRow(
         trace_id=outcome.trace_id,
@@ -89,6 +90,8 @@ def _row_from_success(outcome: TraceOutcome, *, contract_id: str, user_id_key: s
         user_id=snapshot.metadata.get(user_id_key),
         entry_agent=snapshot.entry_agent,
         session_id=snapshot.session_id,
+        user_prompt=snapshot.user_prompt,
+        skill_names=skill_names,
         duration_ms=snapshot.duration_ms,
         total_tokens=snapshot.total_tokens,
         total_cost_usd=snapshot.total_cost_usd,

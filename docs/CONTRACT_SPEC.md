@@ -97,7 +97,7 @@ closed vocabulary.
 
 | Type | Level | Nested under | Auto-derived path convention | Example |
 |---|---|---|---|---|
-| `api` | flat | — | `services/{name}/designtime/{name}_API.json` | `services/hrdb/designtime/hrdb_API.json` |
+| `api` | flat | — | `services/{name}/designtime/{name}_API.json` — matches `JavaService`/`SoapService`/`DataService`/`SecurityService`-typed services only (per wm-agent-server's `skills/common/ui/explore-api.md`). A `RestService`/`OpenAPIService`-imported API (e.g. Swagger) needs `_API_REST_SERVICE.json` instead, and a `WebSocketService` needs `_API_WEBSOCKET_SERVICE.json` — both require an explicit `path:` override; the convention only covers the default case. | `services/hrdb/designtime/hrdb_API.json` (DataService default) — see the full example below for a REST-service override (`api.petstore`) |
 | `javaservice` | flat | — | `services/{name}/designtime/{name}_API.json` | `services/MyJavaService/designtime/MyJavaService_API.json`. The real `.java` source needs an explicit `path:` — its package-path layout isn't derivable from `name` alone. |
 | `db` | flat | — | `services/{name}/designtime/{name}_published_dataModel.json` | `services/hrdb/designtime/hrdb_published_dataModel.json` |
 | `design_tokens` | flat | — | `src/main/webapp/pages/{name}/{name}.tokens-plan.json` | `src/main/webapp/pages/CreateProduct/CreateProduct.tokens-plan.json`. `name` here is the page it belongs to (there's no page-nesting for this type). Token-override files under `design-tokens/overrides/**` need an explicit `path:`. |
@@ -196,6 +196,17 @@ is a violation (`unrelated_file_changed`) — this single mechanism covers both 
 creep" and "nothing protected got touched." There is no separate `protected:` list: a
 resource that's only ever referenced under `input_context` (never `output`) is automatically
 protected, because any change to it is caught by this same check.
+
+**Known limitation — platform-created resources.** `FileChangeRecord` extraction
+(`TraceSnapshot.file_changes`) only recognizes `write_file`/`edit_file_content`/`delete_file`
+calls as write evidence. When a resource is actually created via a platform/MCP tool (e.g.
+`ui_createApiAwareVariable`) rather than a direct file-editing tool, there's no confirmed
+evidence of what — if anything — shows up as matching write evidence in a real trace. Traces
+used in this repo's tests model this with a plausible but unverified stand-in (a separate
+`edit_file_content` span alongside the platform tool call). Treat `output` operation checks
+on platform-created resources as unverified against real traffic until a real trace sample
+confirms what evidence actually appears; extending `FILE_WRITE_TOOLS` or teaching `output` to
+accept a platform tool call itself as write evidence are both options once that's confirmed.
 
 ---
 
@@ -314,7 +325,7 @@ output:
     operation: UPDATE
 
 tools:
-  required: [read_files, execute_tool]
+  required: [read_files, ui_createApiAwareVariable]
   optional: [platform_getServiceDetails, platform_getDefinitionInformation, edit_file_content, write_file]
   forbidden: [delete_file]
 ```

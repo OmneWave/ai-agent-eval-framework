@@ -1,13 +1,17 @@
+import json
 from unittest.mock import MagicMock, patch
 
 import httpx
 
 from wm_agents_validator.trace.fetcher import (
+    OBSERVATION_PAGE_SIZE,
     _extract_observations,
     _fetch_observations_rest,
     _observations_from_trace,
     fetch_via_rest,
+    iter_trace_id_pages,
     list_trace_ids_in_range,
+    search_trace_ids_by_metadata,
 )
 
 
@@ -151,3 +155,90 @@ def test_list_trace_ids_in_range_passes_user_id_filter():
 
     assert trace_ids == []
     assert captured_params["userId"] == "alice"
+
+
+def _fake_traces_response(trace_ids: list[str]):
+    return MagicMock(data=[MagicMock(id=tid) for tid in trace_ids])
+
+
+def test_search_trace_ids_by_metadata_passes_filter_json_through():
+    filters = [
+        {"type": "stringObject", "column": "metadata", "key": "workflow_name", "operator": "=", "value": "foo"}
+    ]
+    mock_client = MagicMock()
+    mock_client.api.trace.list.return_value = _fake_traces_response(["trace-1"])
+
+    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+        trace_ids = search_trace_ids_by_metadata(filters, limit=10, environment="stage-ai")
+
+    assert trace_ids == ["trace-1"]
+    _, kwargs = mock_client.api.trace.list.call_args
+    assert json.loads(kwargs["filter"]) == filters
+    assert kwargs["environment"] == "stage-ai"
+
+
+def test_search_trace_ids_by_metadata_stops_once_limit_reached():
+    filters = [{"type": "stringObject", "column": "metadata", "key": "k", "operator": "=", "value": "v"}]
+    mock_client = MagicMock()
+    mock_client.api.trace.list.side_effect = [
+        _fake_traces_response(["trace-1", "trace-2"]),
+        _fake_traces_response(["trace-3"]),
+    ]
+
+    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+        trace_ids = search_trace_ids_by_metadata(filters, limit=2)
+
+    assert trace_ids == ["trace-1", "trace-2"]
+    assert mock_client.api.trace.list.call_count == 1
+
+
+def test_search_trace_ids_by_metadata_paginates_when_first_page_short_of_limit():
+    filters = [{"type": "stringObject", "column": "metadata", "key": "k", "operator": "=", "value": "v"}]
+    mock_client = MagicMock()
+    mock_client.api.trace.list.side_effect = [
+        _fake_traces_response([f"trace-{i}" for i in range(OBSERVATION_PAGE_SIZE)]),
+        _fake_traces_response(["trace-last"]),
+    ]
+
+    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+        trace_ids = search_trace_ids_by_metadata(filters, limit=OBSERVATION_PAGE_SIZE + 1)
+
+    assert trace_ids[-1] == "trace-last"
+    assert mock_client.api.trace.list.call_count == 2
+    second_call_kwargs = mock_client.api.trace.list.call_args_list[1].kwargs
+    assert second_call_kwargs["page"] == 2
+
+
+def test_iter_trace_id_pages_yields_each_page_and_stops_on_short_page():
+    mock_client = MagicMock()
+    mock_client.api.trace.list.side_effect = [
+        _fake_traces_response(["a", "b"]),
+        _fake_traces_response(["c"]),
+    ]
+
+    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+        pages = list(iter_trace_id_pages(page_size=2))
+
+    assert pages == [["a", "b"], ["c"]]
+    assert mock_client.api.trace.list.call_count == 2
+
+
+def test_iter_trace_id_pages_stops_on_empty_page():
+    mock_client = MagicMock()
+    mock_client.api.trace.list.return_value = _fake_traces_response([])
+
+    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+        pages = list(iter_trace_id_pages(page_size=20))
+
+    assert pages == []
+
+
+def test_iter_trace_id_pages_respects_max_pages():
+    mock_client = MagicMock()
+    mock_client.api.trace.list.return_value = _fake_traces_response(["a", "b"])  # always full page
+
+    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+        pages = list(iter_trace_id_pages(page_size=2, max_pages=3))
+
+    assert len(pages) == 3
+    assert mock_client.api.trace.list.call_count == 3
