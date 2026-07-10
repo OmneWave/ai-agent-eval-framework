@@ -4,10 +4,15 @@ import argparse
 import sys
 from pathlib import Path
 
-from wm_agents_validator.cli.langfuse_config import add_langfuse_args, init_langfuse_env
+from wm_agents_validator.cli.langfuse_config import add_langfuse_args, get_langfuse_environment, init_langfuse_env
 from wm_agents_validator.comparison.aggregator import merge_reports
 from wm_agents_validator.comparison.pipeline import ComparisonPipeline
-from wm_agents_validator.comparison.sources import ExplicitTraceIdSource, TimeRangeTraceSource
+from wm_agents_validator.comparison.sources import (
+    ContentSearchTraceSource,
+    ExplicitTraceIdSource,
+    MetadataFilterTraceSource,
+    TimeRangeTraceSource,
+)
 from wm_agents_validator.contracts.loader import load_contract
 from wm_agents_validator.report.html_comparison_renderer import HtmlComparisonRenderer
 
@@ -31,7 +36,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "  # Time range (single contract only)\n"
             "  uv run compare-traces --contract contracts/foo.yaml "
             "--from 2026-07-01T00:00:00Z --to 2026-07-02T00:00:00Z "
-            "--user-id alice --out report.html"
+            "--user-id alice --out report.html\n\n"
+            "  # Metadata filter, no time range needed (single contract only)\n"
+            "  uv run compare-traces --contract contracts/foo.yaml "
+            "--filter workflow_name=create_variable_binding --filter model_name=glm-5 "
+            "--limit 20 --out report.html\n\n"
+            "  # Content search: no --trace-ids/--from-to/--filter at all -- keeps searching\n"
+            "  # the most recent traces until --limit actually match (single contract only)\n"
+            "  uv run compare-traces --contract contracts/foo.yaml "
+            "--user-prompt-contains findByTags --skill-name-contains api_binding "
+            "--limit 20 --out report.html"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -49,7 +63,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     source_group = parser.add_argument_group(
         "Trace selection (pick one)",
-        "Either --trace-ids / ids embedded in --contract, or a --from/--to time range",
+        "Either --trace-ids / ids embedded in --contract, a --from/--to time range, or --filter",
     )
     source_group.add_argument(
         "--trace-ids",
@@ -61,11 +75,26 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     source_group.add_argument("--from", dest="from_ts", help="Range start, ISO-8601 (e.g. 2026-07-01T00:00:00Z)")
     source_group.add_argument("--to", dest="to_ts", help="Range end, ISO-8601")
     source_group.add_argument(
+        "--filter",
+        action="append",
+        metavar="KEY=VALUE",
+        help="Metadata key=value to filter traces by (server-side, exact match). Repeatable -- "
+        "each occurrence ANDs another condition, e.g. --filter workflow_name=foo "
+        "--filter model_name=glm-5. Works standalone, no --from/--to needed. Single "
+        "contract only, like time-range mode.",
+    )
+    source_group.add_argument(
         "--user-id",
         help="Langfuse native userId to filter time-range traces by",
     )
     source_group.add_argument(
-        "--limit", type=int, default=50, help="Max traces to pull in time-range mode (default: 50)"
+        "--limit",
+        type=int,
+        default=50,
+        help="Time-range/--filter mode: max candidate traces to pull. Content-search mode "
+        "(--user-prompt-contains/--skill-name-contains with no other selection mode): max "
+        "*matching* traces to find, searching the most recent traces until this many match "
+        "or a safety cap on candidates scanned is hit. (default: 50)",
     )
 
     parser.add_argument(
@@ -78,6 +107,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         help="Only include traces whose captured model_name matches this value",
+    )
+    parser.add_argument(
+        "--user-prompt-contains",
+        dest="user_prompt_contains",
+        help="Only include traces whose user_prompt (normalized trace input) contains this text "
+        "(case-insensitive substring, client-side -- Langfuse has no server-side filter for "
+        "input content, confirmed against a live instance). Applied after fetching, on top of "
+        "whichever trace-selection mode you used.",
+    )
+    parser.add_argument(
+        "--skill-name-contains",
+        dest="skill_name_contains",
+        help="Only include traces where any loaded skill name contains this text (case-insensitive "
+        "substring, client-side -- skill_names isn't a native Langfuse column, it's derived "
+        "during normalization from load_skill tool-call spans, so there's no server-side filter "
+        "for it either). Applied after fetching, on top of whichever trace-selection mode you used.",
     )
     parser.add_argument("--out", required=True, help="Output HTML file path")
     parser.add_argument("--retries", type=int, default=12)
@@ -100,6 +145,23 @@ def _split_contract_arg(value: str) -> tuple[str, list[str]]:
     path, ids_part = value.split(":", 1)
     ids = [t.strip() for t in ids_part.split(",") if t.strip()]
     return path.strip(), ids
+
+
+def _parse_metadata_filters(values: list[str]) -> list[tuple[str, str]]:
+    """Parses repeated `--filter key=value` values into (key, value) pairs.
+
+    Raises ValueError naming the bad value if any occurrence has no `=`.
+    """
+    pairs: list[tuple[str, str]] = []
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"--filter value {value!r} must be in key=value form")
+        key, val = value.split("=", 1)
+        key, val = key.strip(), val.strip()
+        if not key or not val:
+            raise ValueError(f"--filter value {value!r} must be in key=value form")
+        pairs.append((key, val))
+    return pairs
 
 
 def _resolve_contract_trace_groups(
@@ -141,18 +203,33 @@ def main() -> None:
     has_embedded_ids = any(":" in c for c in args.contract)
     has_explicit_ids = bool(args.trace_ids) or has_embedded_ids
     has_time_range = bool(args.from_ts or args.to_ts)
-    if has_explicit_ids == has_time_range:
+    has_filter = bool(args.filter)
+    has_content_filter = bool(args.user_prompt_contains or args.skill_name_contains)
+    explicit_modes = sum([has_explicit_ids, has_time_range, has_filter])
+    if explicit_modes > 1:
         parser.error(
-            "Provide exactly one of --trace-ids / ids embedded in --contract OR --from/--to"
+            "Provide exactly one of --trace-ids / ids embedded in --contract, OR "
+            "--from/--to, OR --filter"
         )
+    if explicit_modes == 0 and not has_content_filter:
+        parser.error(
+            "Provide exactly one of --trace-ids / ids embedded in --contract, OR "
+            "--from/--to, OR --filter, OR --user-prompt-contains/--skill-name-contains "
+            "(content search mode -- searches the most recent traces until --limit matches)"
+        )
+    # No explicit mode, but a content filter alone -> search mode: keep pulling
+    # candidates until --limit traces actually match, rather than filtering a
+    # fixed batch from one of the other three modes.
+    has_content_search = explicit_modes == 0
     if has_time_range and not (args.from_ts and args.to_ts):
         parser.error("--from and --to must both be provided together")
-    if has_time_range and len(args.contract) > 1:
-        parser.error("--from/--to time-range mode supports only a single --contract")
-    if has_time_range and has_embedded_ids:
-        parser.error("--from/--to time-range mode doesn't take trace ids embedded in --contract")
+    if (has_time_range or has_filter or has_content_search) and len(args.contract) > 1:
+        parser.error("--from/--to, --filter, and content-search modes support only a single --contract")
+    if (has_time_range or has_filter) and has_embedded_ids:
+        parser.error("--from/--to and --filter modes don't take trace ids embedded in --contract")
 
     init_langfuse_env(args)
+    environment = get_langfuse_environment()
 
     if has_explicit_ids:
         try:
@@ -168,14 +245,37 @@ def main() -> None:
                 source=ExplicitTraceIdSource(trace_ids),
                 user_id_key=args.user_id_key,
                 model_filter=args.model,
+                user_prompt_filter=args.user_prompt_contains,
+                skill_name_filter=args.skill_name_contains,
                 retries=args.retries,
                 delay_sec=args.delay,
             )
             for contract_path, trace_ids in groups
         ]
-    else:
-        source = TimeRangeTraceSource(
-            args.from_ts, args.to_ts, user_id=args.user_id, limit=args.limit
+    elif has_filter:
+        try:
+            metadata_filters = _parse_metadata_filters(args.filter)
+        except ValueError as exc:
+            parser.error(str(exc))
+        source = MetadataFilterTraceSource(metadata_filters, limit=args.limit, environment=environment)
+        pipelines = [
+            ComparisonPipeline(
+                contract=load_contract(args.contract[0]),
+                source=source,
+                user_id_key=args.user_id_key,
+                model_filter=args.model,
+                user_prompt_filter=args.user_prompt_contains,
+                skill_name_filter=args.skill_name_contains,
+                retries=args.retries,
+                delay_sec=args.delay,
+            )
+        ]
+    elif has_content_search:
+        source = ContentSearchTraceSource(
+            user_prompt_contains=args.user_prompt_contains,
+            skill_name_contains=args.skill_name_contains,
+            limit=args.limit,
+            environment=environment,
         )
         pipelines = [
             ComparisonPipeline(
@@ -183,6 +283,24 @@ def main() -> None:
                 source=source,
                 user_id_key=args.user_id_key,
                 model_filter=args.model,
+                user_prompt_filter=args.user_prompt_contains,
+                skill_name_filter=args.skill_name_contains,
+                retries=args.retries,
+                delay_sec=args.delay,
+            )
+        ]
+    else:
+        source = TimeRangeTraceSource(
+            args.from_ts, args.to_ts, user_id=args.user_id, limit=args.limit, environment=environment
+        )
+        pipelines = [
+            ComparisonPipeline(
+                contract=load_contract(args.contract[0]),
+                source=source,
+                user_id_key=args.user_id_key,
+                model_filter=args.model,
+                user_prompt_filter=args.user_prompt_contains,
+                skill_name_filter=args.skill_name_contains,
                 retries=args.retries,
                 delay_sec=args.delay,
             )

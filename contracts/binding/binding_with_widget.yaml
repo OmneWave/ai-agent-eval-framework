@@ -38,6 +38,6 @@ output:
     operation: UPDATE
 
 tools:
-  required: [read_files, execute_tool]
+  required: [read_files, ui_createApiAwareVariable]
   optional: [platform_getServiceDetails, platform_getDefinitionInformation, edit_file_content, write_file]
   forbidden: [delete_file]

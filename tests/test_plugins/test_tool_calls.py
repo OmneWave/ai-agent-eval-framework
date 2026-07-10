@@ -8,7 +8,7 @@ def test_tool_calls_passes_with_fixture(snapshot, contract):
     assert result.score == 1.0
     assert result.violations == []
     checks = result.evidence["checks"]
-    assert set(checks) == {"read_files", "execute_tool", "forbidden tools"}
+    assert set(checks) == {"read_files", "ui_createApiAwareVariable", "forbidden tools"}
     for check in checks.values():
         assert check["passed"] is True
 
@@ -25,7 +25,7 @@ def test_tool_calls_flags_missing_required_tool(snapshot, contract):
 
     checks = result.evidence["checks"]
     assert checks["read_files"]["passed"] is False
-    assert checks["execute_tool"]["passed"] is True
+    assert checks["ui_createApiAwareVariable"]["passed"] is True
 
 
 def test_tool_calls_flags_forbidden_tool_used(snapshot, contract):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -223,6 +224,7 @@ def list_trace_ids_in_range(
     *,
     user_id: str | None = None,
     limit: int = 50,
+    environment: str | None = None,
 ) -> list[str]:
     """Discover trace IDs via Langfuse's paginated `GET /api/public/traces`.
 
@@ -241,6 +243,8 @@ def list_trace_ids_in_range(
     }
     if user_id:
         params["userId"] = user_id
+    if environment:
+        params["environment"] = environment
 
     trace_ids: list[str] = []
     with httpx.Client(timeout=30.0) as client:
@@ -264,6 +268,82 @@ def list_trace_ids_in_range(
             params["page"] = int(params["page"]) + 1
 
     return trace_ids[:limit]
+
+
+def search_trace_ids_by_metadata(
+    filters: list[dict[str, Any]],
+    *,
+    limit: int = 50,
+    environment: str | None = None,
+) -> list[str]:
+    """Finds up to `limit` trace IDs matching structured metadata filter conditions,
+    applied server-side via Langfuse's actual SDK method (`client.api.trace.list`).
+
+    `filters` is a list of Langfuse filter-condition dicts, e.g.
+    `{"type": "stringObject", "column": "metadata", "key": "workflow_name",
+    "operator": "=", "value": "create_variable_binding"}` -- ANDed together by
+    Langfuse server-side. See `trace.list()`'s own docstring for the full filter
+    JSON syntax and available columns.
+
+    Uses the SDK client (unlike `list_trace_ids_in_range`) because there's no
+    simpler documented top-level query param for structured filter conditions --
+    the `filter` JSON string has to go through `trace.list()`. Confirmed against
+    a real Langfuse instance that `column: "input"` is rejected server-side
+    ("Column input does not match a UI / CH table mapping.") but `metadata` is a
+    real, working column -- see the contract-schema plan for the full trail.
+    """
+    client = get_client()
+    page_size = min(max(limit, 1), OBSERVATION_PAGE_SIZE)
+    trace_ids: list[str] = []
+    page = 1
+    for _ in range(MAX_OBSERVATION_PAGES):
+        if len(trace_ids) >= limit:
+            break
+        response = client.api.trace.list(
+            filter=json.dumps(filters),
+            limit=page_size,
+            page=page,
+            environment=environment,
+        )
+        batch = response.data or []
+        for item in batch:
+            if item.id:
+                trace_ids.append(item.id)
+            if len(trace_ids) >= limit:
+                break
+        if len(batch) < page_size:
+            break
+        page += 1
+
+    return trace_ids[:limit]
+
+
+def iter_trace_id_pages(
+    *,
+    page_size: int = 20,
+    environment: str | None = None,
+    max_pages: int = 25,
+):
+    """Yields pages of the most recent trace IDs (Langfuse's default order),
+    with no filter and no time bound.
+
+    For callers that need to inspect each candidate's actual content (e.g.
+    `ContentSearchTraceSource`) and decide whether to keep paging, rather than
+    a filter Langfuse can apply server-side. Stops after `max_pages` (a hard
+    safety cap, not a target) or as soon as a short page signals nothing's
+    left.
+    """
+    client = get_client()
+    page = 1
+    for _ in range(max_pages):
+        response = client.api.trace.list(limit=page_size, page=page, environment=environment)
+        batch = response.data or []
+        if not batch:
+            return
+        yield [item.id for item in batch if item.id]
+        if len(batch) < page_size:
+            return
+        page += 1
 
 
 def fetch_trace(

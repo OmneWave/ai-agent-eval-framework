@@ -70,6 +70,18 @@ class ComparisonRow(BaseModel):
     user_id: str | None = None
     entry_agent: str | None = None
     session_id: str | None = None
+    user_prompt: str | None = None
+    """The trace's normalized input (`TraceSnapshot.user_prompt`) -- kept here so
+    `filtered_by_user_prompt` can match on it client-side. Langfuse's trace-list
+    API has no server-side filter for this (confirmed against a live instance --
+    `column: "input"` is rejected as unmapped), so unlike `model_name` there's no
+    way to push this filter down to the fetch itself."""
+    skill_names: list[str] = Field(default_factory=list)
+    """Every skill name loaded anywhere in the trace (flattened from
+    `TraceSnapshot.skill_loads`), kept here so `filtered_by_skill_name` can
+    match on it client-side -- like `user_prompt`, this isn't a native Langfuse
+    column (it's derived during normalization from `load_skill` tool-call
+    spans), so there's no server-side filter for it either."""
 
     duration_ms: int | None = None
     total_tokens: int | None = None
@@ -115,6 +127,25 @@ class ComparisonReport(BaseModel):
     def filtered_by_model(self, model_name: str) -> "ComparisonReport":
         wanted = model_name.strip().lower()
         rows = [row for row in self.rows if (row.model_name or "").strip().lower() == wanted]
+        return self.model_copy(update={"rows": rows})
+
+    def filtered_by_user_prompt(self, search_text: str) -> "ComparisonReport":
+        """Case-insensitive substring match against each row's `user_prompt`.
+
+        Client-side by necessity -- see `ComparisonRow.user_prompt`'s docstring.
+        """
+        needle = search_text.strip().lower()
+        rows = [row for row in self.rows if needle in (row.user_prompt or "").lower()]
+        return self.model_copy(update={"rows": rows})
+
+    def filtered_by_skill_name(self, search_text: str) -> "ComparisonReport":
+        """Case-insensitive substring match against any of each row's
+        `skill_names` entries.
+
+        Client-side by necessity -- see `ComparisonRow.skill_names`'s docstring.
+        """
+        needle = search_text.strip().lower()
+        rows = [row for row in self.rows if any(needle in skill.lower() for skill in row.skill_names)]
         return self.model_copy(update={"rows": rows})
 
 

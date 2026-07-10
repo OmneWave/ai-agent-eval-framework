@@ -97,6 +97,19 @@ cp .env.example .env
 # Fill LANGFUSE_* values
 ```
 
+### Optional: `LANGFUSE_ENVIRONMENT`
+
+Filters every trace lookup (both `--from`/`--to` and `--filter` modes in `compare-traces`) to a
+specific Langfuse `environment` tag. Defaults to `default` if not set. Same priority order as the
+credentials above — `--langfuse-environment` flag, then `LANGFUSE_ENVIRONMENT` env var, then the
+default.
+
+```bash
+LANGFUSE_ENVIRONMENT=prod uv run compare-traces ...
+# or
+uv run compare-traces --langfuse-environment prod ...
+```
+
 ## Usage
 
 Minimal — trace ID + contract only:
@@ -214,7 +227,7 @@ fixed convention built from the real WaveMaker project layout:
 
 | Type | Convention |
 |---|---|
-| `api` | `services/{name}/designtime/{name}_API.json` |
+| `api` | `services/{name}/designtime/{name}_API.json` — default only; `RestService`/`OpenAPIService` needs `_API_REST_SERVICE.json`, `WebSocketService` needs `_API_WEBSOCKET_SERVICE.json` (explicit `path:` override required for both — see [docs/CONTRACT_SPEC.md](docs/CONTRACT_SPEC.md)) |
 | `javaservice` | `services/{name}/designtime/{name}_API.json` |
 | `db` | `services/{name}/designtime/{name}_published_dataModel.json` |
 | `design_tokens` | `src/main/webapp/pages/{name}/{name}.tokens-plan.json` |
@@ -301,11 +314,64 @@ uv run compare-traces \
   --out comparison.html
 ```
 
+**4. A metadata filter** (single contract only, no time range needed) — matches traces whose
+`metadata` has an exact key=value match, server-side via Langfuse's own filter query (not a
+client-side scan). Repeat `--filter` to AND multiple conditions:
+
+```bash
+uv run compare-traces \
+  --contract contracts/binding/binding_with_widget.yaml \
+  --filter workflow_name=create_variable_binding --filter model_name=glm-5 \
+  --limit 20 \
+  --out comparison.html
+```
+
+Note: Langfuse's trace-list API has no server-side way to filter by a trace's raw `input`/`output`
+content (confirmed directly against a live instance — `column: "input"` is rejected with
+`"Column input does not match a UI / CH table mapping."`) — only structured columns like
+`metadata`, `name`, `environment`, `tags`, `userId`, `sessionId` are filterable. `--filter` targets
+`metadata`, so it only works if your traces actually carry the relevant value there.
+
+**Filtering by the trace's actual prompt** — since `input` isn't server-side filterable, use
+`--user-prompt-contains` instead, applied client-side after fetching (same mechanism as
+`--model`), against `TraceSnapshot.user_prompt` (the normalized trace input):
+
+```bash
+uv run compare-traces \
+  --contract contracts/binding/binding_with_widget.yaml \
+  --from 2026-07-01T00:00:00Z --to 2026-07-02T00:00:00Z \
+  --user-prompt-contains "findByTags" \
+  --out comparison.html
+```
+
+**5. Content search, no time range and no other selection mode at all** — give only
+`--user-prompt-contains`/`--skill-name-contains` (no `--trace-ids`, `--from`/`--to`, or `--filter`):
+this switches to a search mode that keeps pulling the most recent traces (20 at a time internally)
+and checking each one's actual content, until `--limit` traces **actually match** — not "fetch N
+candidates and see how many match," but "keep searching until N matches are found" (bounded by an
+internal safety cap on total candidates scanned, in case the search term never matches):
+
+```bash
+uv run compare-traces \
+  --contract contracts/binding/binding_with_widget.yaml \
+  --user-prompt-contains "findByTags" --skill-name-contains "api_binding" \
+  --limit 20 \
+  --out comparison.html
+```
+
+This is heavier than the other modes since it fetches+normalizes every candidate it scans (not
+just ones that end up matching) to inspect their content — there's no way to avoid that given
+Langfuse has no server-side filter for `input`/skill names (see above). It's still cheaper than
+combining `--from`/`--to` with `--user-prompt-contains`, since that combo runs full contract
+verification on every candidate in the batch, not just a lightweight fetch+normalize.
+
 Other flags:
 
 - `--model <name>` — only include rows whose captured `model_name` matches (client-side filter, applied after evaluation, since model is only known once a trace is normalized).
+- `--user-prompt-contains <text>` — only include rows whose `user_prompt` contains this text (case-insensitive substring, client-side, applied after evaluation — combinable with any trace-selection mode above, including `--filter`; used alone with no other selection mode, triggers content search mode above instead).
+- `--skill-name-contains <text>` — only include rows where any loaded skill name contains this text (case-insensitive substring, client-side — `skill_names` is derived during normalization from `load_skill` tool-call spans, not a native Langfuse column, so same story as `user_prompt`).
+- `--limit <n>` — max candidate traces to pull in time-range/`--filter` mode, or max **matching** traces to find in content-search mode (default: 50).
 - `--user-id-key <key>` — which `TraceSnapshot.metadata` key holds the user id to show/group by in the report (default: `user_id`). Langfuse's native `userId` field is captured under this key automatically as a fallback; pass a different key if your traces stash the identifier elsewhere in trace metadata.
-- `--limit <n>` — max traces to pull in time-range mode (default: 50).
 
 A trace that fails to fetch or verify doesn't abort the whole batch — it shows up in the report as an errored row with the failure reason, and every other trace still gets compared.
 

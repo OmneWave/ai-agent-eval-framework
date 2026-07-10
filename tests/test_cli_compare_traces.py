@@ -1,6 +1,7 @@
 import pytest
 
 from wm_agents_validator.cli.compare_traces import (
+    _parse_metadata_filters,
     _resolve_contract_trace_groups,
     _split_contract_arg,
 )
@@ -67,3 +68,26 @@ def test_multiple_contracts_reject_separate_trace_ids_flag():
         _resolve_contract_trace_groups(
             ["contracts/a.yaml:id1,id2", "contracts/b.yaml:id3,id4"], ["id5"]
         )
+
+
+def test_parse_metadata_filters_happy_path():
+    assert _parse_metadata_filters(["workflow_name=foo", "model_name=glm-5"]) == [
+        ("workflow_name", "foo"),
+        ("model_name", "glm-5"),
+    ]
+
+
+def test_parse_metadata_filters_strips_whitespace():
+    assert _parse_metadata_filters([" workflow_name = foo "]) == [("workflow_name", "foo")]
+
+
+def test_parse_metadata_filters_rejects_missing_equals():
+    with pytest.raises(ValueError):
+        _parse_metadata_filters(["workflow_name"])
+
+
+def test_parse_metadata_filters_rejects_empty_key_or_value():
+    with pytest.raises(ValueError):
+        _parse_metadata_filters(["=foo"])
+    with pytest.raises(ValueError):
+        _parse_metadata_filters(["workflow_name="])

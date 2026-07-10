@@ -4,6 +4,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# NOTE on "api": the default suffix (`_API.json`) matches JavaService/SoapService/
+# DataService/SecurityService-typed services (per wm-agent-server's
+# skills/common/ui/explore-api.md). A RestService/OpenAPIService-imported API (e.g. a
+# Swagger import) uses `_API_REST_SERVICE.json` instead, and a WebSocketService uses
+# `_API_WEBSOCKET_SERVICE.json` -- both need an explicit `path:` override on that
+# registry entry, same as javaservice's real .java source below.
 _PATH_CONVENTIONS = {
     "api": "services/{name}/designtime/{name}_API.json",
     "javaservice": "services/{name}/designtime/{name}_API.json",
