@@ -16,15 +16,10 @@ The evaluation engine works in four stages:
    - The system fetches a trace or loads a saved snapshot.
    - The trace is normalized into a structured representation that captures skills, tools, file changes, agents, errors, and status.
 
-3. Plugin-based evaluation
-   - Multiple plugins inspect different aspects of the run against the contract defined in [docs/CONTRACT_SPEC.md](docs/CONTRACT_SPEC.md):
-     - `skills_loaded`: verifies required skills loaded and succeeded, and that no unexpected skills were loaded.
-     - `input_context`: checks whether each required resource was actually read and whether the required terms/qualifiers showed up in tool-call input or output, while also flagging unrelated reads outside the declared scope.
-     - `tool_calls`: enforces the contract-wide tool policy by requiring all required tools and forbidding any forbidden ones.
-     - `output`: verifies the declared create/update/delete operations and ensures no unrelated files were changed.
-     - `trace_health`: checks trace status, error spans, and build success when applicable.
-     - `resource_usage`: reports duration, token, and cost metrics for observability; it does not fail or score the run because there is no contract-defined budget gate.
-   - Each plugin returns a full pass/fail breakdown, score, and evidence so the report shows not only the overall result but also what passed and what failed.
+3. [Plugin-based evaluation](#plugins)
+   - The evaluation run is checked by a set of contract-driven plugins that assess skills, input context, tool usage, output changes, trace health, and usage metrics.
+   - Each plugin produces a pass/fail breakdown, a score, and evidence so the report clearly shows what passed and what failed.
+   - See the [Plugins](#plugins) section for the detailed behavior of each plugin.
 
 4. Aggregated reporting
    - The framework combines plugin outputs into an overall score.
