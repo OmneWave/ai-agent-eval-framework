@@ -2,12 +2,13 @@ workflow: ui_to_api_binding
 contract_version: "1.0.0"
 
 skills:
-  required: [ui_to_api_binding_workflow, variables, actions, markup]
-  optional: [explore-codebase, explore-api]
+  required: [ ui_to_api_binding_workflow, explore-codebase, explore-api,variables, actions, markup, javascript]
+  optional: []
 
 knowledge:
-  - /catalog/components/wm-table-column/wm-table-column.md
+  - /catalog/actions/NotificationAction/NotificationAction.md
   - /catalog/components/wm-table/wm-table.md
+  - /catalog/components/wm-table-column/wm-table-column.md
   - /catalog/variables/ApiAwareVariable/ApiAwareVariable.md
   - /catalog/variables/BaseVariable/BaseVariable.md
   - /catalog/variables/ServiceVariable/ServiceVariable.md
@@ -22,22 +23,29 @@ resources:
     - name: PetTable
       path: src/main/webapp/pages/PetTable/PetTable.html
       variable:
-        - name: pet_table_variable
+        - name: findPetsByTagsVariable
           path: src/main/webapp/pages/PetTable/PetTable.variables.json
       widget:
         - name: swagger_findPetsByTagsTable1
           path: src/main/webapp/pages/PetTable/PetTable.html
+      javascript:
+        - name: PetTable
+          path: src/main/webapp/pages/PetTable/PetTable.js
 
 input_context:
   - resource: api.petstore.petstore_findPetsByTags
+  - resource: page.PetTable
+  - resource: page.PetTable.variable.findPetsByTagsVariable
 
 output:
-  - resource: page.PetTable.variable.pet_table_variable
+  - resource: page.PetTable.variable.findPetsByTagsVariable
     operation: CREATE
   - resource: page.PetTable.widget.swagger_findPetsByTagsTable1
     operation: UPDATE
+  - resource: page.PetTable.javascript.PetTable
+    operation: UPDATE
 
 tools:
-  required: [read_files, ui_createApiAwareVariable]
-  optional: [platform_getServiceDetails, platform_getDefinitionInformation, edit_file_content, write_file]
+  required: [find_files_by_glob, read_files, get_tool_schema, write_file, ui_updateVariable, platform_listPageVariables, platform_getServiceDetails, ui_createApiAwareVariable, ui_createNonApiAwareVariable, grep_in_files, execute_tool]
+  optional: [edit_file_content]
   forbidden: [delete_file]

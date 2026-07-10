@@ -13,6 +13,11 @@ DELEGATION_TOOL_NAMES = frozenset(
 )
 FILE_WRITE_TOOLS = frozenset({"write_file", "edit_file_content", "delete_file"})
 SKILL_TOOL = "load_skill"
+EXECUTE_TOOL_WRAPPER = "execute_tool"
+"""wm-agent-server's generic dispatcher tool (`execute_tool(tool_name, tool_args)`,
+see src/tools.py) -- the trace records the span as `execute_tool`, but the tool
+policy (`tools.required`/`forbidden`) is written in terms of the *actual* tool
+name passed as its `tool_name` argument. See `_build_tools_summary`."""
 
 
 class SkillLoadRecord(BaseModel):
