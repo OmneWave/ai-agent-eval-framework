@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.env
+.env.local
+.venv/
+dist/
+*.egg-info/
+.pytest_cache/
+uv.lock
+.idea/**
+comparison.html

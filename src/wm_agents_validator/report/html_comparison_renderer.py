@@ -1,0 +1,594 @@
+"""Renders a `ComparisonReport` as a self-contained, framework-free HTML report.
+
+Design notes (SOLID / 12-factor):
+  - Single Responsibility: this module only turns a `ComparisonReport` into an
+    HTML string. It knows nothing about how traces were fetched or verified.
+  - Open/Closed: `ComparisonReportRenderer` is a narrow Protocol so alternative
+    renderers (JSON, CSV, Slack digest, ...) can be added without touching the
+    pipeline or CLI that call it.
+  - No new runtime dependency: the template is vanilla HTML/CSS/JS. The data
+    is embedded as a single JSON blob so the artifact is 100% self-contained
+    (works by double-clicking the file, no server, no CDN, no build step) --
+    this keeps "build" (report generation) and "run" (viewing the report)
+    fully decoupled, per 12-factor's build/release/run separation.
+
+UI philosophy: the table only ever shows columns that carry *comparative*
+signal. A field that's identical across every trace in the report (e.g. the
+report was run for one model, one contract, one user) is hoisted into a
+"shared context" strip above the table instead of being repeated as a column
+on every single row -- this is decided from the data itself, not hardcoded,
+so the same template stays clean whether you're comparing 3 models against 1
+contract or 1 model against 10 contracts. Low-level identifiers (trace id,
+session id) live in the per-row drill-down, not the table. Violations are
+shown nested under the plugin that raised them, not in a separate list.
+"""
+from __future__ import annotations
+
+from typing import Protocol, runtime_checkable
+
+from wm_agents_validator.models.comparison import ComparisonReport
+
+_DATA_PLACEHOLDER = "__COMPARISON_DATA_JSON__"
+
+
+@runtime_checkable
+class ComparisonReportRenderer(Protocol):
+    """Anything that can turn a `ComparisonReport` into a renderable string."""
+
+    def render(self, report: ComparisonReport) -> str: ...
+
+
+class HtmlComparisonRenderer:
+    """Renders a `ComparisonReport` as a single self-contained HTML document."""
+
+    def render(self, report: ComparisonReport) -> str:
+        # Defensively escape "</script" inside embedded JSON so a violation
+        # message or trace_id can never prematurely close the data <script>
+        # tag; "\/" is valid JSON and JSON.parse restores the plain "/".
+        safe_json = report.model_dump_json().replace("</script", "<\\/script")
+        return _TEMPLATE.replace(_DATA_PLACEHOLDER, safe_json)
+
+
+_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trace Comparison Report</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e2229; --border: #2a2f3a;
+    --text: #e6e8ec; --muted: #9399a8; --accent: #6ea8fe;
+    --green: #3fbf6f; --yellow: #e0b93d; --red: #f0575d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); padding: 32px 40px 80px;
+  }
+  h1 { font-size: 22px; margin: 0 0 10px; }
+  .muted { color: var(--muted); }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .meta-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+  .meta-pill {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+    padding: 5px 12px; font-size: 12px; color: var(--text);
+  }
+  .meta-pill-label { color: var(--muted); margin-right: 6px; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 20px; min-width: 130px;
+  }
+  .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .card .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+  .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .toolbar select, .toolbar input {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 13px;
+  }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
+  thead th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  thead th.sortable { cursor: pointer; user-select: none; }
+  thead th.sortable:hover { color: var(--text); }
+  tbody tr.row { cursor: pointer; border-bottom: 1px solid var(--border); }
+  tbody tr.row:hover { background: var(--panel-2); }
+  tbody td { padding: 10px 14px; font-size: 13px; white-space: nowrap; }
+  tbody tr.error-row td { color: var(--red); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .badge {
+    display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  }
+  .badge.green { background: rgba(63,191,111,.15); color: var(--green); }
+  .badge.yellow { background: rgba(224,185,61,.15); color: var(--yellow); }
+  .badge.red { background: rgba(240,87,93,.15); color: var(--red); }
+  .badge.neutral { background: rgba(147,153,168,.15); color: var(--muted); }
+  .chevron { display: inline-block; transition: transform .15s ease; color: var(--muted); transform-origin: 45% 50%; }
+  tr.expanded .chevron { transform: rotate(90deg); }
+  tr.expanded .chevron, tbody tr.row:hover .chevron { color: var(--accent); }
+  tr.detail-row { display: none; background: var(--panel-2); }
+  tr.detail-row.open { display: table-row; }
+  tr.detail-row td { padding: 18px 24px; white-space: normal; }
+  .detail-meta { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 16px; font-size: 12px; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .detail-grid h4 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; color: var(--muted); }
+  .plugin-scroll { max-height: 360px; overflow-y: auto; padding-right: 4px; }
+  .plugin-block { padding: 6px 0; border-bottom: 1px dashed var(--border); }
+  .plugin-block:last-child { border-bottom: none; }
+  .plugin-line { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+  .plugin-violations { margin-top: 6px; padding-left: 18px; }
+  .violation-item { font-size: 12px; color: var(--yellow); padding: 2px 0; line-height: 1.5; }
+  .violation-item.ok { color: var(--green); }
+  .gen-line { display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; color: var(--text); border-bottom: 1px dashed var(--border); }
+  .gen-line:last-child { border-bottom: none; }
+  .empty { color: var(--muted); padding: 40px; text-align: center; }
+  .plugin-summary { display: flex; align-items: center; gap: 8px; }
+  .plugin-dots { display: flex; gap: 3px; flex-wrap: wrap; max-width: 140px; }
+  .plugin-dot {
+    width: 9px; height: 9px; border-radius: 3px; display: inline-block;
+    background: #3a3f4b;
+  }
+  .plugin-dot.green { background: var(--green); }
+  .plugin-dot.yellow { background: var(--yellow); }
+  .plugin-dot.red { background: var(--red); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 24px; }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .panel-header h3 { margin: 0; font-size: 14px; }
+  .panel-header select {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 9px; font-size: 12px;
+  }
+  .heatmap-table { width: 100%; border-collapse: collapse; }
+  .heatmap-table th, .heatmap-table td { padding: 8px 10px; font-size: 12px; text-align: center; white-space: nowrap; }
+  .heatmap-table thead th { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .03em; border-bottom: 1px solid var(--border); }
+  .heatmap-row-label { text-align: left !important; color: var(--text); font-weight: 600; }
+  .heatmap-cell { border-radius: 6px; font-weight: 600; }
+  .heatmap-cell.empty-cell { color: var(--muted); font-weight: 400; background: transparent; }
+</style>
+</head>
+<body>
+  <h1>Trace Comparison Report</h1>
+  <div class="subtitle" id="subtitle"></div>
+  <div class="meta-pills" id="meta-pills"></div>
+
+  <div class="cards" id="summary-cards"></div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <h3>Plugin Score Heatmap</h3>
+      <select id="heatmap-group-by">
+        <option value="model_name">Group by Model</option>
+        <option value="contract_id">Group by Contract</option>
+      </select>
+    </div>
+    <div id="heatmap-container"></div>
+  </div>
+
+  <div class="toolbar">
+    <select id="contract-filter"><option value="">All contracts</option></select>
+    <select id="model-filter"><option value="">All models</option></select>
+    <select id="user-filter"><option value="">All users</option></select>
+    <select id="status-filter">
+      <option value="">All statuses</option>
+      <option value="pass">Passed</option>
+      <option value="fail">Failed</option>
+      <option value="error">Errored</option>
+    </select>
+    <input id="search" type="text" placeholder="Search...">
+  </div>
+
+  <table>
+    <thead><tr id="table-head-row"></tr></thead>
+    <tbody id="table-body"></tbody>
+  </table>
+  <div class="empty" id="empty-state" style="display:none;">No traces match the current filters.</div>
+
+  <script id="comparison-data" type="application/json">__COMPARISON_DATA_JSON__</script>
+  <script>
+    const REPORT = JSON.parse(document.getElementById('comparison-data').textContent);
+    const PLUGIN_NAMES = [...new Set(
+      REPORT.rows.flatMap(r => (r.plugin_scores || []).map(p => p.plugin))
+    )];
+    let sortKey = null;
+    let sortDir = 1;
+    const state = { model: '', contract: '', user: '', status: '', search: '' };
+
+    function distinctValues(key) {
+      return [...new Set(REPORT.rows.map(r => r[key]).filter(Boolean))];
+    }
+
+    function esc(s) {
+      return (s ?? '').toString().replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
+    function fmtMs(ms) {
+      if (ms === null || ms === undefined) return '—';
+      if (ms < 1000) return ms + ' ms';
+      return (ms / 1000).toFixed(1) + ' s';
+    }
+    function fmtNum(n) { return (n === null || n === undefined) ? '—' : n.toLocaleString(); }
+    function fmtCost(c) { return (c === null || c === undefined) ? '—' : ('$' + c.toFixed(4)); }
+    function fmtScore(s) { return (s === null || s === undefined) ? '—' : (s * 100).toFixed(0) + '%'; }
+
+    function tierOf(row) {
+      if (row.status === 'error') return 'red';
+      if (!row.passed) return 'red';
+      if ((row.overall_score ?? 1) < 1.0) return 'yellow';
+      return 'green';
+    }
+
+    function pluginTierClass(pluginScore) {
+      if (!pluginScore) return '';
+      if (!pluginScore.passed) return 'red';
+      return pluginScore.score < 1.0 ? 'yellow' : 'green';
+    }
+
+    // --- Shared-context promotion: a field that's identical across every row
+    // (e.g. the report only ever covers one model) is noise as a repeated
+    // column, so it's shown once as a pill instead of on every row.
+    const SHARED_CONTEXT_FIELDS = [
+      ['contract_id', 'Contract'],
+      ['model_name', 'Model'],
+      ['user_id', 'User'],
+      ['entry_agent', 'Agent'],
+    ];
+    const VARYING_FIELDS = new Set(
+      SHARED_CONTEXT_FIELDS.filter(([key]) => distinctValues(key).length > 1).map(([key]) => key)
+    );
+
+    function renderHeader() {
+      const pills = [];
+      for (const [key, label] of SHARED_CONTEXT_FIELDS) {
+        if (VARYING_FIELDS.has(key)) continue;
+        const values = distinctValues(key);
+        if (!values.length) continue;
+        pills.push(`<span class="meta-pill"><span class="meta-pill-label">${esc(label)}</span>${esc(values[0])}</span>`);
+      }
+      document.getElementById('meta-pills').innerHTML = pills.join('');
+      document.getElementById('subtitle').textContent =
+        `Generated ${REPORT.generated_at} · ${REPORT.rows.length} trace(s)`;
+    }
+
+    function renderSummary(rows) {
+      const total = rows.length;
+      const ok = rows.filter(r => r.status === 'ok');
+      const passed = ok.filter(r => r.passed).length;
+      const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+      const avgScore = avg(ok.map(r => r.overall_score).filter(v => v !== null && v !== undefined));
+      const avgDuration = avg(ok.map(r => r.duration_ms).filter(v => v !== null && v !== undefined));
+      const totalCost = ok.reduce((a, r) => a + (r.total_cost_usd || 0), 0);
+      const totalTokens = ok.reduce((a, r) => a + (r.total_tokens || 0), 0);
+
+      const cards = [
+        ['Traces', total],
+        ['Passed', total ? `${passed}/${ok.length}` : '—'],
+        ['Avg Score', avgScore !== null ? fmtScore(avgScore) : '—'],
+        ['Avg Duration', avgDuration !== null ? fmtMs(avgDuration) : '—'],
+        ['Total Tokens', fmtNum(totalTokens)],
+        ['Total Cost', fmtCost(totalCost)],
+      ];
+      document.getElementById('summary-cards').innerHTML = cards.map(([label, value]) => `
+        <div class="card"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div></div>
+      `).join('');
+    }
+
+    function heatColor(avgScore) {
+      const hue = Math.max(0, Math.min(1, avgScore)) * 120; // 0=red -> 120=green
+      return `hsla(${hue}, 65%, 45%, ${0.25 + avgScore * 0.35})`;
+    }
+
+    function computeHeatmap(rows, groupKey) {
+      const groups = [...new Set(rows.map(r => r[groupKey]).filter(Boolean))].sort();
+      const matrix = {};
+      for (const group of groups) {
+        matrix[group] = {};
+        const groupRows = rows.filter(r => r[groupKey] === group);
+        for (const plugin of PLUGIN_NAMES) {
+          const scores = groupRows.flatMap(
+            r => (r.plugin_scores || []).filter(ps => ps.plugin === plugin)
+          );
+          matrix[group][plugin] = scores.length
+            ? {
+                avg: scores.reduce((a, s) => a + s.score, 0) / scores.length,
+                passRate: scores.filter(s => s.passed).length / scores.length,
+                count: scores.length,
+              }
+            : null;
+        }
+      }
+      return { groups, matrix };
+    }
+
+    function pruneHeatmapGroupOptions() {
+      const select = document.getElementById('heatmap-group-by');
+      [...select.options].forEach(opt => {
+        if (!VARYING_FIELDS.has(opt.value)) opt.remove();
+      });
+      if (select.options.length) select.value = select.options[0].value;
+    }
+
+    function renderHeatmap(rows) {
+      const groupBySelect = document.getElementById('heatmap-group-by');
+      const panel = groupBySelect.closest('.panel');
+      const container = document.getElementById('heatmap-container');
+
+      if (!groupBySelect.options.length) {
+        panel.style.display = 'none';
+        return;
+      }
+      const groupKey = groupBySelect.value;
+      const { groups, matrix } = computeHeatmap(rows, groupKey);
+
+      if (groups.length < 2 || !PLUGIN_NAMES.length) {
+        panel.style.display = 'none';
+        return;
+      }
+      panel.style.display = '';
+
+      let html = '<table class="heatmap-table"><thead><tr><th></th>';
+      for (const plugin of PLUGIN_NAMES) html += `<th>${esc(plugin)}</th>`;
+      html += '</tr></thead><tbody>';
+      for (const group of groups) {
+        html += `<tr><td class="heatmap-row-label">${esc(group)}</td>`;
+        for (const plugin of PLUGIN_NAMES) {
+          const cell = matrix[group][plugin];
+          if (!cell) {
+            html += `<td class="heatmap-cell empty-cell">—</td>`;
+          } else {
+            // Show one number per cell: the average score (0-100%), colored
+            // by that same score. Pass rate (the stricter, SWE-bench-style
+            // "did every check in this plugin pass" metric -- see the
+            // contract schema's Scoring section) is detail-only, in the
+            // hover tooltip, since showing it alongside the score as a
+            // second bold number reads as contradictory (e.g. "0%" next to
+            // "75%") when in fact they answer different questions.
+            const pct = Math.round(cell.avg * 100);
+            const passPct = Math.round(cell.passRate * 100);
+            const title = cell.count > 1
+              ? `${esc(group)} · ${esc(plugin)}: ${pct}% avg score, ${passPct}% fully passed all checks, across ${cell.count} traces`
+              : `${esc(group)} · ${esc(plugin)}: ${pct}% score (1 trace, ${passPct === 100 ? 'passed' : 'did not pass'} every check for this plugin)`;
+            html += `<td class="heatmap-cell" style="background:${heatColor(cell.avg)}" title="${title}">${pct}%</td>`;
+          }
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+    function populateFilter(selectId, key, stateKey) {
+      const select = document.getElementById(selectId);
+      if (!VARYING_FIELDS.has(key)) {
+        select.style.display = 'none';
+        return;
+      }
+      for (const value of distinctValues(key).sort()) {
+        const opt = document.createElement('option');
+        opt.value = value; opt.textContent = value;
+        select.appendChild(opt);
+      }
+      select.addEventListener('change', (e) => { state[stateKey] = e.target.value; render(); });
+    }
+
+    function applyFilters(rows) {
+      return rows.filter(r => {
+        if (state.model && r.model_name !== state.model) return false;
+        if (state.contract && r.contract_id !== state.contract) return false;
+        if (state.user && r.user_id !== state.user) return false;
+        if (state.status === 'pass' && !(r.status === 'ok' && r.passed)) return false;
+        if (state.status === 'fail' && !(r.status === 'ok' && !r.passed)) return false;
+        if (state.status === 'error' && r.status !== 'error') return false;
+        if (state.search) {
+          const haystack = [
+            r.trace_id, r.entry_agent, r.user_id, r.model_name, r.contract_id, r.session_id,
+          ].filter(Boolean).join(' ').toLowerCase();
+          if (!haystack.includes(state.search.toLowerCase())) return false;
+        }
+        return true;
+      });
+    }
+
+    function applySort(rows) {
+      if (!sortKey) return rows;
+      return [...rows].sort((a, b) => {
+        const av = a[sortKey], bv = b[sortKey];
+        if (av === null || av === undefined) return 1;
+        if (bv === null || bv === undefined) return -1;
+        if (av < bv) return -1 * sortDir;
+        if (av > bv) return 1 * sortDir;
+        return 0;
+      });
+    }
+
+    // --- Table columns are computed once from the *whole* report (not the
+    // filtered subset) so the table shape stays stable while filtering.
+    const COLUMNS = [
+      { key: '_chevron', label: '' },
+      { key: '_index', label: '#' },
+      ...SHARED_CONTEXT_FIELDS
+        .filter(([key]) => VARYING_FIELDS.has(key))
+        .map(([key, label]) => ({ key, label, sortable: true })),
+      { key: 'duration_ms', label: 'Duration', sortable: true },
+      { key: 'total_tokens', label: 'Tokens', sortable: true },
+      { key: 'total_cost_usd', label: 'Cost', sortable: true },
+      { key: 'overall_score', label: 'Score', sortable: true },
+      { key: '_plugins', label: 'Plugins' },
+    ];
+
+    function renderTableHead() {
+      const tr = document.getElementById('table-head-row');
+      tr.innerHTML = COLUMNS.map(col => {
+        if (!col.sortable) return `<th>${esc(col.label)}</th>`;
+        return `<th class="sortable" data-key="${col.key}">${esc(col.label)}</th>`;
+      }).join('');
+      tr.querySelectorAll('th[data-key]').forEach(th => {
+        th.addEventListener('click', () => {
+          const key = th.dataset.key;
+          sortDir = (sortKey === key) ? -sortDir : 1;
+          sortKey = key;
+          render();
+        });
+      });
+    }
+
+    function resultBadgeHtml(row) {
+      if (row.status === 'error') return `<span class="badge red">ERROR</span>`;
+      const tier = tierOf(row);
+      return `<span class="badge ${tier}">${fmtScore(row.overall_score)}</span>`;
+    }
+
+    function pluginSummaryHtml(row) {
+      const scores = row.plugin_scores || [];
+      if (!scores.length) return '<span class="muted">—</span>';
+      const passCount = scores.filter(p => p.passed).length;
+      const tier = passCount === scores.length ? 'green' : (passCount === 0 ? 'red' : 'yellow');
+      const dots = scores.map(p => {
+        const tierClass = pluginTierClass(p);
+        const title = `${esc(p.plugin)}: ${fmtScore(p.score)} (${p.passed ? 'PASS' : 'FAIL'})`;
+        return `<span class="plugin-dot ${tierClass}" title="${title}"></span>`;
+      }).join('');
+      return `<div class="plugin-summary"><span class="badge ${tier}">${passCount}/${scores.length}</span>`
+        + `<div class="plugin-dots">${dots}</div></div>`;
+    }
+
+    function cellHtml(col, row, idx) {
+      switch (col.key) {
+        case '_chevron': return `<td class="chevron">▶</td>`;
+        case '_index': return `<td class="mono muted" title="${esc(row.trace_id)}">#${idx + 1}</td>`;
+        case 'duration_ms': return `<td>${fmtMs(row.duration_ms)}</td>`;
+        case 'total_tokens': return `<td>${fmtNum(row.total_tokens)}</td>`;
+        case 'total_cost_usd': return `<td>${fmtCost(row.total_cost_usd)}</td>`;
+        case 'overall_score': return `<td>${resultBadgeHtml(row)}</td>`;
+        case '_plugins': return `<td>${row.status === 'error' ? '<span class="muted">—</span>' : pluginSummaryHtml(row)}</td>`;
+        default: return `<td>${esc(row[col.key] || '—')}</td>`;
+      }
+    }
+
+    function groupGenerationsByAgent(generations) {
+      const byAgent = {};
+      for (const g of (generations || [])) {
+        const key = g.agent_id || 'unknown';
+        if (!byAgent[key]) byAgent[key] = { agent_id: key, count: 0, total_tokens: 0, total_cost: 0 };
+        byAgent[key].count += 1;
+        byAgent[key].total_tokens += g.total_tokens || 0;
+        byAgent[key].total_cost += g.cost_usd || 0;
+      }
+      return Object.values(byAgent).sort((a, b) => b.total_cost - a.total_cost);
+    }
+
+    function detailRowHtml(row) {
+      const pluginsHtml = (row.plugin_scores || []).map(p => {
+        const tier = pluginTierClass(p);
+        // Plugins that evaluate several named things (e.g. input_context's
+        // per-resource checks) report each one's outcome in `checks`, pass or
+        // fail, so the drill-down shows the full breakdown even on a clean
+        // pass -- not just an empty section. A violation whose `resource`
+        // matches a check's label is just that check's failure reason and is
+        // skipped below to avoid printing it twice; violations that aren't
+        // tied to any single check (e.g. input_context's unrelated-reads
+        // warning) must still be shown, or a score drop below 100% would have
+        // no visible explanation even though every check line is green.
+        const checkLabels = new Set((p.checks || []).map(c => c.label));
+        const checkItems = (p.checks || []).map(c => `
+          <div class="violation-item ${c.passed ? 'ok' : ''}">${c.passed ? '✓' : '⚠'} <strong>${esc(c.label)}</strong>${c.detail ? ': ' + esc(c.detail) : ''}</div>
+        `).join('');
+        const violationItems = (p.violations || [])
+          .filter(v => !(v.resource && checkLabels.has(v.resource)))
+          .map(v => `
+          <div class="violation-item">⚠ <strong>${esc(v.code)}</strong>: ${esc(v.message)}</div>
+        `).join('');
+        const noDetailFallback = !p.passed && !checkItems && !violationItems
+          ? '<div class="violation-item">No details captured.</div>'
+          : '';
+        const detailBlock = (checkItems || violationItems || noDetailFallback)
+          ? `<div class="plugin-violations">${checkItems}${violationItems}${noDetailFallback}</div>`
+          : '';
+        return `
+          <div class="plugin-block">
+            <div class="plugin-line">
+              <span>${p.passed ? '✅' : '❌'} ${esc(p.plugin)}</span>
+              <span class="badge ${tier}">${fmtScore(p.score)}</span>
+            </div>
+            ${detailBlock}
+          </div>
+        `;
+      }).join('') || '<div class="violation-item">No plugin results.</div>';
+
+      const genGroups = groupGenerationsByAgent(row.generations);
+      const generationsHtml = genGroups.map(g => `
+        <div class="gen-line">
+          <span>${esc(g.agent_id)} <span class="muted">(${g.count} call${g.count === 1 ? '' : 's'})</span></span>
+          <span>${fmtNum(g.total_tokens)} tok · ${fmtCost(g.total_cost)}</span>
+        </div>
+      `).join('') || '<div class="gen-line">No generation-level data captured.</div>';
+
+      return `
+        <div class="detail-meta">
+          <span class="mono">Trace: ${esc(row.trace_id)}</span>
+          ${row.session_id ? `<span class="mono muted">Session: ${esc(row.session_id)}</span>` : ''}
+        </div>
+        <div class="detail-grid">
+          <div>
+            <h4>Plugins</h4>
+            <div class="plugin-scroll">${pluginsHtml}</div>
+          </div>
+          <div>
+            <h4>Generations (by agent)</h4>
+            ${generationsHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    function render() {
+      const filtered = applySort(applyFilters(REPORT.rows));
+      renderSummary(filtered);
+      renderHeatmap(filtered);
+      const tbody = document.getElementById('table-body');
+      tbody.innerHTML = '';
+      document.getElementById('empty-state').style.display = filtered.length ? 'none' : 'block';
+
+      filtered.forEach((row, idx) => {
+        const tr = document.createElement('tr');
+        tr.className = 'row' + (row.status === 'error' ? ' error-row' : '');
+        tr.innerHTML = COLUMNS.map(col => cellHtml(col, row, idx)).join('');
+
+        const detailTr = document.createElement('tr');
+        detailTr.className = 'detail-row';
+        const detailTd = document.createElement('td');
+        detailTd.colSpan = COLUMNS.length;
+        detailTd.innerHTML = row.status === 'error'
+          ? `<div class="violation-item">⚠ ${esc(row.error_message || 'Unknown error')}</div>`
+          : detailRowHtml(row);
+        detailTr.appendChild(detailTd);
+
+        tr.addEventListener('click', () => {
+          tr.classList.toggle('expanded');
+          detailTr.classList.toggle('open');
+        });
+
+        tbody.appendChild(tr);
+        tbody.appendChild(detailTr);
+      });
+    }
+
+    document.getElementById('status-filter').addEventListener('change', (e) => { state.status = e.target.value; render(); });
+    document.getElementById('search').addEventListener('input', (e) => { state.search = e.target.value; render(); });
+    document.getElementById('heatmap-group-by').addEventListener('change', () => render());
+
+    renderHeader();
+    renderTableHead();
+    populateFilter('contract-filter', 'contract_id', 'contract');
+    populateFilter('model-filter', 'model_name', 'model');
+    populateFilter('user-filter', 'user_id', 'user');
+    pruneHeatmapGroupOptions();
+    render();
+  </script>
+</body>
+</html>
+"""
