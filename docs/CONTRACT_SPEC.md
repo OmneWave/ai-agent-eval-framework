@@ -331,5 +331,5 @@ tools:
 ```
 
 See [contracts/binding/binding_with_widget.yaml](../contracts/binding/binding_with_widget.yaml)
-and [contracts/screenshot_to_code/screenshot_to_code_v1.yaml](../contracts/screenshot_to_code/screenshot_to_code_v1.yaml)
+and [contracts/screenshot_to_code/screenshot_to_code_v1.yaml](../contracts/screenshot_to_code/screenshot_to_code_login_v1.yaml)
 for the real contracts this schema is used by.

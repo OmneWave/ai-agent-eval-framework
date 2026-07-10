@@ -1,0 +1,91 @@
+workflow: screenshot_to_code
+contract_version: "1.0.0"
+
+skills:
+  required:
+    - components-list
+    - page-layouts
+    - container-system
+    - layout-rules
+    - widget-defaults
+    - interaction-patterns
+    - pattern-detection
+    - new_page_from_screenshot_workflow
+    - screenshot-to-wavemaker-web
+  optional:
+  - foundation-tokens
+  - widget-templates
+  - styling-system
+  - token-schema
+  - phase3-tokens
+  - variables
+  - partial-templates
+  - verification-checklist
+#  - advanced-table
+#  - advanced-tabs
+#  - advanced-accordion
+#  - advanced-dialogs
+#  - advanced-navigation
+#  - advanced-carousel
+#  - advanced-wizard
+  - advanced-form
+#  - advanced-tree
+  - advanced-combined
+#  - example-dashboard
+#  - example-data-table
+  - example-login
+#  - example-file-upload
+#  - multi-screenshots
+  - output-cloud
+#  - output-local
+
+knowledge: []
+
+resources:
+  page:
+    - name: LoginPage
+      path: src/main/webapp/pages/LoginPage/LoginPage.html
+  design_tokens:
+    - name: tokens-plan
+      path: src/main/webapp/pages/LoginPage/LoginPage.tokens-plan.json
+    - name: layout-plan
+      path: src/main/webapp/pages/LoginPage/LoginPage.layout-plan.json
+    - name: components-anchor
+      path: src/main/webapp/design-tokens/overrides/components/anchor/anchor.json
+    - name: components-button
+      path: src/main/webapp/design-tokens/overrides/components/button/button.json
+    - name: components-checkbox
+      path: src/main/webapp/design-tokens/overrides/components/checkbox/checkbox.json
+    - name: components-container
+      path: src/main/webapp/design-tokens/overrides/components/container/container.json
+    - name: components-label
+      path: src/main/webapp/design-tokens/overrides/components/label/label.json
+    - name: global-color-light
+      path: src/main/webapp/design-tokens/overrides/global/color/color.light.json
+
+input_context: []
+
+output:
+  - resource: page.LoginPage
+    operation: CREATE
+  - resource: design_tokens.tokens-plan
+    operation: CREATE
+  - resource: design_tokens.layout-plan
+    operation: CREATE
+  - resource: design_tokens.components-anchor
+    operation: CREATE
+  - resource: design_tokens.components-button
+    operation: CREATE
+  - resource: design_tokens.components-checkbox
+    operation: CREATE
+  - resource: design_tokens.components-container
+    operation: CREATE
+  - resource: design_tokens.components-label
+    operation: CREATE
+  - resource: design_tokens.global-color-light
+    operation: CREATE
+
+tools:
+  required: [write_file, load_skill, ui_getPageScreenshot, platform_createWebPage, find_files_by_glob, platform_getSessionResource, platform_listPages]
+  optional: [ui_createNonApiAwareVariable, read_files]
+  forbidden: [delete_file]
