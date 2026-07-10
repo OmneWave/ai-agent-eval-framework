@@ -17,15 +17,14 @@ The evaluation engine works in four stages:
    - The trace is normalized into a structured representation that captures skills, tools, file changes, agents, errors, and status.
 
 3. Plugin-based evaluation
-   - Multiple plugins inspect different aspects of the run:
-     - intent verification
-     - resource coverage
-     - tool policy
-     - context grounding
-     - file mutability
-     - trace health
-     - resource usage
-   - Each plugin returns a score, pass/fail result, and evidence.
+   - Multiple plugins inspect different aspects of the run against the contract defined in [docs/CONTRACT_SPEC.md](docs/CONTRACT_SPEC.md):
+     - `skills_loaded`: verifies required skills loaded and succeeded, and that no unexpected skills were loaded.
+     - `input_context`: checks whether each required resource was actually read and whether the required terms/qualifiers showed up in tool-call input or output, while also flagging unrelated reads outside the declared scope.
+     - `tool_calls`: enforces the contract-wide tool policy by requiring all required tools and forbidding any forbidden ones.
+     - `output`: verifies the declared create/update/delete operations and ensures no unrelated files were changed.
+     - `trace_health`: checks trace status, error spans, and build success when applicable.
+     - `resource_usage`: reports duration, token, and cost metrics for observability; it does not fail or score the run because there is no contract-defined budget gate.
+   - Each plugin returns a full pass/fail breakdown, score, and evidence so the report shows not only the overall result but also what passed and what failed.
 
 4. Aggregated reporting
    - The framework combines plugin outputs into an overall score.
@@ -33,34 +32,7 @@ The evaluation engine works in four stages:
 
 ## Why this is useful
 
-This makes the framework well suited for evaluating whether an agent behaved correctly for a given task. It is especially useful when the same workflow needs to be tested repeatedly across different prompts, agents, or models.
-
-The key advantage is that the evaluation is structured and repeatable. The same contract can be applied to multiple traces, and the framework will judge each one under the same rules.
-
-## How it can be used as a Cross-Model Benchmarking Framework
-
-A cross-model benchmark compares the same use case across different models by running the same evaluation contract against each model’s trace output.
-
-### Benchmarking workflow
-
-1. Define a contract for each use case
-   - Example: UI-to-API binding, file-edit workflow, agent handoff workflow, or multi-step planning task.
-
-2. Collect traces from each model
-   - Run the same task using Model A, Model B, and Model C.
-   - Capture the trace for each run.
-
-3. Evaluate each trace with the same contract
-   - Apply the same workflow contract to each trace.
-   - This ensures fairness because every model is judged using identical criteria.
-
-4. Compare scores and plugin results
-   - Compare overall scores, pass/fail status, and plugin-level breakdowns.
-   - This shows not just whether a model passed, but where it performed well or poorly.
-
-5. Rank models per use case and overall
-   - A model may excel in tool usage but struggle with planning coverage.
-   - This makes the benchmark more informative than a single overall score.
+This framework helps the WaveMaker AI platform identify the most suitable model for build use cases. It provides a consistent and objective way to evaluate models against a defined benchmark and measure their performance through a score. For enterprise teams using the platform, this enables confident decision-making by validating whether a model meets the required standards and performs reliably for business-critical workflows.
 
 ## What makes it a strong benchmark
 
@@ -90,20 +62,6 @@ A simple benchmark can be structured as follows:
 | JavaService Orchestration | contract C | 0.78 | 0.84 | 0.80 |
 
 From this, you can identify which model is strongest in which scenario and where one model is more robust than another.
-
-## Best practice for using it as a benchmark
-
-To make the framework effective for cross-model comparison:
-
-- Use the same contract for all models in a given test case.
-- Keep the task prompt and environment consistent.
-- Capture enough trace detail to support all plugins.
-- Compare both overall scores and plugin-level diagnostics.
-- Track results over time to observe improvements or regressions.
-
-## Summary
-
-This evaluation engine is not just a validator; it is a structured benchmarking framework. By applying contract-driven evaluation to traces from different models, it enables fair, repeatable, and evidence-based comparison of model performance across real workflows.
 
 ## Setup
 
@@ -284,12 +242,12 @@ without a separate `operationId`/`class`+`method`/`table_name`+`column_name` fie
 
 | Plugin | Checks |
 |--------|--------|
-| `skills_loaded` | Required skill(s) loaded and succeeded, no extras beyond `required`/`optional` |
-| `input_context` | Whether each `input_context[]` entry's resolved resource was actually read by a tool call (vs. assumed/hallucinated), and whether its `terms` + any qualifier terms parsed from the reference (from both `input_context` and `output`) showed up in some tool call's input or output — and, in the other direction, whether unrelated files were read via `read_files` that don't belong to `knowledge` or any declared resource (scope creep) |
-| `tool_calls` | The contract-wide `tools` policy: every `required` tool used somewhere in the trace, no `forbidden` tool used anywhere |
-| `output` | Whether each `output[]` entry's resolved resource was created/updated/deleted as declared, and whether anything changed outside the declared `output` scope (a resource never listed under `output` is automatically protected by this check) |
-| `trace_health` | Errors, trace status, and (when a `javaservice`-typed resource is in `output`) build success |
-| `resource_usage` | Reports trace duration, total LLM tokens, and total cost (USD) — purely observational, never scores or fails (there's no contract-declared budget to check against) |
+| `skills_loaded` | Required skill(s) loaded and succeeded, and no extra skills were loaded beyond the declared `required`/`optional` sets. |
+| `input_context` | Each declared `input_context[]` entry must have its resolved resource actually read, and its `terms` plus any qualifier terms parsed from the reference must appear in some tool-call input or output. The plugin also reports unrelated reads outside the declared resource/knowledge scope. |
+| `tool_calls` | The contract-wide `tools` policy is enforced: every `required` tool must appear in the trace and no `forbidden` tool may appear. |
+| `output` | Each declared `output[]` entry must be created/updated/deleted as specified, and no unrelated file changes are allowed outside the declared output scope. |
+| `trace_health` | The trace must not be in an error state, must not contain error spans, and must pass build validation when a Java service resource is part of the output. |
+| `resource_usage` | Duration, token, and cost metrics are reported for observability only; this plugin does not score or fail the run because no contract budget gate is enforced. |
 
 Every plugin reports a full pass/fail breakdown of the named things it evaluated (one entry per resource, skill, tool, etc.), not just a single aggregate score — so both the console and HTML reports show *what* passed and *what* failed, even on a clean run. This is driven by a standard `evidence["checks"]` shape (see `PluginResult` docstring) that any plugin populates; the console/HTML renderers read it generically.
 
