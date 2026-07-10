@@ -148,7 +148,6 @@ _TEMPLATE = """<!DOCTYPE html>
   .heatmap-row-label { text-align: left !important; color: var(--text); font-weight: 600; }
   .heatmap-cell { border-radius: 6px; font-weight: 600; }
   .heatmap-cell.empty-cell { color: var(--muted); font-weight: 400; background: transparent; }
-  .heatmap-cell-detail { font-size: 10px; font-weight: 400; opacity: .75; }
 </style>
 </head>
 <body>
@@ -341,18 +340,19 @@ _TEMPLATE = """<!DOCTYPE html>
           if (!cell) {
             html += `<td class="heatmap-cell empty-cell">—</td>`;
           } else {
-            // Pass rate is the primary, SWE-bench-style resolve-rate metric --
-            // the fraction of runs that fully passed this plugin, aggregated
-            // across many traces (see the contract schema's Scoring section:
-            // no partial credit within one run, cross-model comparison comes
-            // from aggregating binary outcomes over many runs). Average score
-            // is diagnostic-only detail, shown smaller underneath.
+            // Show one number per cell: the average score (0-100%), colored
+            // by that same score. Pass rate (the stricter, SWE-bench-style
+            // "did every check in this plugin pass" metric -- see the
+            // contract schema's Scoring section) is detail-only, in the
+            // hover tooltip, since showing it alongside the score as a
+            // second bold number reads as contradictory (e.g. "0%" next to
+            // "75%") when in fact they answer different questions.
             const pct = Math.round(cell.avg * 100);
             const passPct = Math.round(cell.passRate * 100);
-            const title = `${esc(group)} · ${esc(plugin)}: ${passPct}% pass rate, `
-              + `${pct}% avg score across ${cell.count} trace(s)`;
-            html += `<td class="heatmap-cell" style="background:${heatColor(cell.passRate)}" title="${title}">`
-              + `${passPct}%<div class="heatmap-cell-detail">${pct}% avg</div></td>`;
+            const title = cell.count > 1
+              ? `${esc(group)} · ${esc(plugin)}: ${pct}% avg score, ${passPct}% fully passed all checks, across ${cell.count} traces`
+              : `${esc(group)} · ${esc(plugin)}: ${pct}% score (1 trace, ${passPct === 100 ? 'passed' : 'did not pass'} every check for this plugin)`;
+            html += `<td class="heatmap-cell" style="background:${heatColor(cell.avg)}" title="${title}">${pct}%</td>`;
           }
         }
         html += '</tr>';

@@ -12,6 +12,13 @@ class ToolCallsPlugin:
     ``tools`` is one flat, global policy (not addressed to any resource) --
     neither real contract in this repo ever needed a different tool policy
     per resource, so there's no per-resource scoping here.
+
+    ``snapshot.tool_names`` already accounts for tools invoked indirectly via
+    ``execute_tool`` (wm-agent-server's generic dispatcher) -- the wrapped
+    tool's own name is surfaced alongside ``"execute_tool"`` itself during
+    normalization (see ``_build_tools_summary`` in ``trace/normalizer.py``),
+    so a required/forbidden MCP tool reached only through ``execute_tool``
+    is still checked by its real name here, not missed.
     """
 
     name = "tool_calls"

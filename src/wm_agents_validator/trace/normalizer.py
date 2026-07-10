@@ -7,6 +7,7 @@ from typing import Any
 from wm_agents_validator.models.raw_trace import RawTracePayload
 from wm_agents_validator.models.trace_snapshot import (
     DELEGATION_TOOL_NAMES,
+    EXECUTE_TOOL_WRAPPER,
     EventRecord,
     FailedToolRecord,
     GenerationRecord,
@@ -439,10 +440,25 @@ def _build_tools_summary(spans: list[SpanRecord]) -> ToolsSummary:
         if base_name not in seen_called:
             called.append(base_name)
             seen_called.add(base_name)
+
+        # execute_tool is a generic dispatcher (`execute_tool(tool_name, tool_args)`)
+        # -- the span itself is always named "execute_tool", but the tools policy
+        # is written in terms of the actual tool it invoked, so surface that name
+        # too (e.g. a required/forbidden MCP tool reached only via execute_tool
+        # would otherwise never show up in `called`).
+        wrapped_name = None
+        if base_name == EXECUTE_TOOL_WRAPPER:
+            wrapped_name = (span.input or {}).get("tool_name")
+            if wrapped_name:
+                wrapped_name = str(wrapped_name)
+                if wrapped_name not in seen_called:
+                    called.append(wrapped_name)
+                    seen_called.add(wrapped_name)
+
         if span.success is False:
             failed.append(
                 FailedToolRecord(
-                    name=base_name,
+                    name=wrapped_name or base_name,
                     error_message=span.error_message,
                     timestamp=span.timestamp,
                     span_id=span.id,

@@ -403,6 +403,81 @@ def test_normalizer_extracts_prompts_from_trace_messages():
     assert snap.final_response == "Task 3 complete."
 
 
+def test_normalizer_surfaces_wrapped_tool_name_from_execute_tool():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {"metadata": {"entryagentid": "wm_agent"}, "name": "wm_agent"},
+        "observations": [
+            {
+                "id": "tool-execute",
+                "type": "TOOL",
+                "name": "execute_tool",
+                "metadata": {
+                    "inputs": {
+                        "tool_name": "ui_createApiAwareVariable",
+                        "tool_args": {"variableName": "list1"},
+                    }
+                },
+                "startTime": "2026-01-01T10:00:00Z",
+            }
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+
+    assert "execute_tool" in snap.tools_summary.called
+    assert "ui_createApiAwareVariable" in snap.tools_summary.called
+    assert "ui_createApiAwareVariable" in snap.tool_names
+
+
+def test_normalizer_records_failed_execute_tool_under_wrapped_tool_name():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {"metadata": {"entryagentid": "wm_agent"}, "name": "wm_agent"},
+        "observations": [
+            {
+                "id": "tool-execute",
+                "type": "TOOL",
+                "name": "execute_tool",
+                "level": "ERROR",
+                "statusMessage": "boom",
+                "metadata": {
+                    "inputs": {
+                        "tool_name": "ui_createApiAwareVariable",
+                        "tool_args": {},
+                    }
+                },
+                "startTime": "2026-01-01T10:00:00Z",
+            }
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+
+    failed_names = {failure.name for failure in snap.tools_summary.failed}
+    assert failed_names == {"ui_createApiAwareVariable"}
+
+
+def test_normalizer_does_not_unwrap_non_execute_tool_spans():
+    payload_obs = {
+        "trace_id": "t1",
+        "trace": {"metadata": {"entryagentid": "wm_agent"}, "name": "wm_agent"},
+        "observations": [
+            {
+                "id": "tool-write",
+                "type": "TOOL",
+                "name": "write_file",
+                "metadata": {"inputs": {"tool_name": "should_not_be_extracted"}},
+                "startTime": "2026-01-01T10:00:00Z",
+            }
+        ],
+    }
+
+    snap = normalize_trace(RawTracePayload.model_validate(payload_obs))
+
+    assert snap.tools_summary.called == ["write_file"]
+
+
 @pytest.mark.parametrize(
     "raw_path",
     [REGRESSION_RAW, FULL_RAW_TRACE],
