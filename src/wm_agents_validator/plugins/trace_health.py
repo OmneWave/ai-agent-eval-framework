@@ -3,6 +3,7 @@ from __future__ import annotations
 from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, Violation, score_from_checks
 from wm_agents_validator.models.trace_snapshot import TraceSnapshot, _span_base_name
 from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.plugins.timing import fmt_ms, sum_duration_ms
 
 
 class TraceHealthPlugin:
@@ -43,7 +44,20 @@ class TraceHealthPlugin:
                 )
             )
         checks[error_spans_label] = (
-            {"passed": False, "detail": f"{len(snapshot.errors)} error span(s) present"}
+            {
+                "passed": False,
+                "detail": f"{len(snapshot.errors)} error span(s) present",
+                # One line per actual error (name, message, when) -- without
+                # this, only the count above would ever reach the report,
+                # since these errors all share this check's own resource
+                # label and would otherwise be deduped out of the violations
+                # list as "just restating the check". See PluginCheck docs.
+                "detail_items": [
+                    f"{err.name} ({err.type or 'error'}): {err.message or 'no message'}"
+                    + (f" at {err.timestamp}" if err.timestamp else "")
+                    for err in snapshot.errors
+                ],
+            }
             if snapshot.errors
             else {"passed": True, "detail": "no error spans"}
         )
@@ -72,6 +86,17 @@ class TraceHealthPlugin:
                 checks[build_label] = {"passed": True, "detail": "platform_compile succeeded"}
 
         passed, score = score_from_checks(checks)
+
+        # Informational only -- added after scoring so it never affects
+        # passed/score; see plugins/timing.py.
+        error_spans = [span for span in snapshot.spans if span.success is False]
+        error_ms = sum_duration_ms(error_spans)
+        checks["error time"] = {
+            "passed": True,
+            "detail": (
+                f"{fmt_ms(error_ms)} across {len(error_spans)} error(s)" if error_spans else "no errors"
+            ),
+        }
 
         return PluginResult(
             plugin=self.name,

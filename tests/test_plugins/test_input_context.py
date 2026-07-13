@@ -21,6 +21,17 @@ def test_input_context_passes_with_fixture(snapshot, contract):
     assert "output qualifiers" not in result.evidence["checks"]
 
 
+def test_input_context_reports_input_gathering_time_without_affecting_score(snapshot, contract):
+    # Informational only -- added after scoring, so it must never turn a
+    # would-be-clean pass into a partial score.
+    result = InputContextPlugin().evaluate(snapshot, contract)
+    assert result.passed
+    assert result.score == 1.0
+    time_check = result.evidence["checks"]["input gathering time"]
+    assert time_check["passed"] is True
+    assert "call(s)" in time_check["detail"]
+
+
 def test_input_context_recognizes_file_paths_key_reads(snapshot, contract):
     # Regression: real read_files tool calls shape their input as
     # {"file_paths": [...]} (plural, snake_case).
@@ -34,7 +45,7 @@ def test_input_context_recognizes_file_paths_key_reads(snapshot, contract):
             timestamp="2026-01-01T10:00:05Z",
             end_time=None,
             level="DEFAULT",
-            input={"file_paths": ["services/petstore/designtime/petstore_API_REST_SERVICE.json"]},
+            input={"file_paths": ["services/petstore/designtime/petstore_apiTarget.json"]},
             output=None,
             success=True,
         )
@@ -47,7 +58,7 @@ def test_input_context_matches_path_regardless_of_leading_slash(snapshot, contra
     for span in snapshot.spans:
         if span.id == "span-read-files":
             span.input = {
-                "paths": ["/services/petstore/designtime/petstore_API_REST_SERVICE.json"],
+                "paths": ["/services/petstore/designtime/petstore_apiTarget.json"],
                 "operationId": "petstore_findPetsByTags",
             }
     result = InputContextPlugin().evaluate(snapshot, contract)
@@ -65,6 +76,23 @@ def test_input_context_flags_missing_path(snapshot, contract):
     entry = result.evidence["entries"][_RESOURCE]
     assert entry["retrieved"] is False
     assert "never retrieved" in entry["reason"]
+
+
+def test_input_context_flags_failed_read_as_not_retrieved(snapshot, contract):
+    # The tool call referenced the right path, but errored out -- the content
+    # was never actually delivered, so this must not count as "retrieved".
+    for span in snapshot.spans:
+        if span.id == "span-read-files":
+            span.success = False
+            span.error_message = "file not found"
+    result = InputContextPlugin().evaluate(snapshot, contract)
+    assert not result.passed
+    codes = [v.code for v in result.violations]
+    assert "context_path_read_failed" in codes
+    assert "context_path_not_retrieved" not in codes
+    entry = result.evidence["entries"][_RESOURCE]
+    assert entry["retrieved"] is False
+    assert "read failed" in entry["reason"]
 
 
 def test_input_context_flags_deviation_and_fails(snapshot, contract):
@@ -153,6 +181,10 @@ def test_input_context_does_not_flag_knowledge_reads(snapshot, contract):
 
 
 def test_input_context_flags_catalog_paths_not_in_knowledge(snapshot, contract):
+    # NotificationAction.md is deliberately NOT used here -- it's since been
+    # added to the contract's `knowledge` list, so it's no longer a valid
+    # "not allowed" example. ShowDialogAction.md stays outside `knowledge`.
+    assert "/catalog/actions/ShowDialogAction/ShowDialogAction.md" not in contract.knowledge
     snapshot.spans.append(
         SpanRecord(
             id="span-read-catalog-not-allowed",
@@ -163,13 +195,13 @@ def test_input_context_flags_catalog_paths_not_in_knowledge(snapshot, contract):
             timestamp="2026-01-01T10:00:11Z",
             end_time=None,
             level="DEFAULT",
-            input={"file_paths": ["/catalog/actions/NotificationAction/NotificationAction.md"]},
+            input={"file_paths": ["/catalog/actions/ShowDialogAction/ShowDialogAction.md"]},
             output=None,
             success=True,
         )
     )
     result = InputContextPlugin().evaluate(snapshot, contract)
-    assert result.evidence["unrelated_reads"] == ["/catalog/actions/NotificationAction/NotificationAction.md"]
+    assert result.evidence["unrelated_reads"] == ["/catalog/actions/ShowDialogAction/ShowDialogAction.md"]
     codes = [v.code for v in result.violations]
     assert "unrelated_context_fetched" in codes
 

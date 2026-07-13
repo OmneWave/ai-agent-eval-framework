@@ -8,7 +8,7 @@ def test_tool_calls_passes_with_fixture(snapshot, contract):
     assert result.score == 1.0
     assert result.violations == []
     checks = result.evidence["checks"]
-    assert set(checks) == {"read_files", "ui_createApiAwareVariable", "forbidden tools"}
+    assert set(checks) == set(contract.tools.required) | {"forbidden tools", "tool call time"}
     for check in checks.values():
         assert check["passed"] is True
 
@@ -39,7 +39,7 @@ def test_tool_calls_flags_forbidden_tool_used(snapshot, contract):
             timestamp="2026-01-01T10:00:06Z",
             end_time=None,
             level="DEFAULT",
-            input={"file_path": "services/petstore/designtime/petstore_API_REST_SERVICE.json"},
+            input={"file_path": "services/petstore/designtime/petstore_apiTarget.json"},
             output=None,
             success=True,
         )

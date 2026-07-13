@@ -135,6 +135,44 @@ def test_build_comparison_report_extracts_checks_when_passing(snapshot):
     assert all(c.detail == "context fully grounded" for c in input_context.checks)
 
 
+def test_build_comparison_report_extracts_check_detail_items(snapshot):
+    # detail_items (e.g. one line per error, behind trace_health's "error
+    # spans" summary) must survive into PluginCheck so the report's chevron
+    # disclosure has something to render; absent for checks that don't set it.
+    report_obj = VerificationReport(
+        trace_id=snapshot.trace_id,
+        contract_id="test-contract",
+        passed=False,
+        overall_score=0.5,
+        plugin_results=[
+            PluginResult(
+                plugin="trace_health",
+                passed=False,
+                score=0.5,
+                evidence={
+                    "checks": {
+                        "error spans": {
+                            "passed": False,
+                            "detail": "2 error span(s) present",
+                            "detail_items": ["tool_a: boom at t1", "tool_b: boom at t2"],
+                        },
+                        "trace status": {"passed": True, "detail": "status=success"},
+                    }
+                },
+            ),
+        ],
+    )
+    outcome = TraceOutcome(
+        trace_id=snapshot.trace_id, verify_result=VerifyResult(report=report_obj, snapshot=snapshot)
+    )
+
+    report = build_comparison_report("test-contract", [outcome])
+
+    checks_by_label = {c.label: c for c in report.rows[0].plugin_scores[0].checks}
+    assert checks_by_label["error spans"].detail_items == ["tool_a: boom at t1", "tool_b: boom at t2"]
+    assert checks_by_label["trace status"].detail_items == []
+
+
 def test_build_comparison_report_extracts_checks_when_failing(snapshot):
     report_obj = VerificationReport(
         trace_id=snapshot.trace_id,

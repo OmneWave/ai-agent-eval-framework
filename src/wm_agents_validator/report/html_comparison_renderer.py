@@ -120,9 +120,19 @@ _TEMPLATE = """<!DOCTYPE html>
   .plugin-block { padding: 6px 0; border-bottom: 1px dashed var(--border); }
   .plugin-block:last-child { border-bottom: none; }
   .plugin-line { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+  .plugin-line-right { display: flex; align-items: center; gap: 8px; }
+  .plugin-time { font-size: 11px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .plugin-violations { margin-top: 6px; padding-left: 18px; }
-  .violation-item { font-size: 12px; color: var(--yellow); padding: 2px 0; line-height: 1.5; }
+  /* A failed check (⚠) is a reason `passed` is false for this plugin -- same
+     severity as the row/plugin-level red tier, so it reads clearly as a
+     failure rather than a soft warning. Only an actually-passed check (✓,
+     `.ok`) gets green. */
+  .violation-item { font-size: 12px; color: var(--red); padding: 2px 0; line-height: 1.5; }
   .violation-item.ok { color: var(--green); }
+  .check-detail-toggle { margin-top: 2px; }
+  .check-detail-toggle summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+  .check-detail-toggle summary:hover { color: var(--text); }
+  .check-detail-line { color: var(--text); font-size: 11px; padding: 3px 0 3px 14px; line-height: 1.5; border-left: 2px solid var(--border); margin-top: 2px; }
   .gen-line { display: flex; justify-content: space-between; padding: 5px 0; font-size: 12px; color: var(--text); border-bottom: 1px dashed var(--border); }
   .gen-line:last-child { border-bottom: none; }
   .empty { color: var(--muted); padding: 40px; text-align: center; }
@@ -148,6 +158,7 @@ _TEMPLATE = """<!DOCTYPE html>
   .heatmap-row-label { text-align: left !important; color: var(--text); font-weight: 600; }
   .heatmap-cell { border-radius: 6px; font-weight: 600; }
   .heatmap-cell.empty-cell { color: var(--muted); font-weight: 400; background: transparent; }
+  .heatmap-cell-detail { font-size: 10px; font-weight: 400; opacity: .8; }
 </style>
 </head>
 <body>
@@ -494,9 +505,29 @@ _TEMPLATE = """<!DOCTYPE html>
         // warning) must still be shown, or a score drop below 100% would have
         // no visible explanation even though every check line is green.
         const checkLabels = new Set((p.checks || []).map(c => c.label));
-        const checkItems = (p.checks || []).map(c => `
-          <div class="violation-item ${c.passed ? 'ok' : ''}">${c.passed ? '✓' : '⚠'} <strong>${esc(c.label)}</strong>${c.detail ? ': ' + esc(c.detail) : ''}</div>
-        `).join('');
+        // The one informational "<something> time" check (input gathering,
+        // output generation, tool call, or error time -- see plugins/timing.py)
+        // is shown beside the score badge instead of in the checklist below,
+        // so time-taken reads right next to the percentage it happened during.
+        const timeCheck = (p.checks || []).find(c => c.label.endsWith(' time'));
+        const checkItems = (p.checks || [])
+          .filter(c => c !== timeCheck)
+          .map(c => {
+            // A check's own one-line `detail` (e.g. "4 error span(s) present")
+            // can hide what actually went wrong -- `detail_items` (e.g. one
+            // line per error's name/message/timestamp) renders as a native
+            // <details> disclosure so the specifics are one click away
+            // without cluttering the collapsed view.
+            const items = c.detail_items || [];
+            const itemsHtml = items.length
+              ? `<details class="check-detail-toggle"><summary>${items.length} detail(s)</summary>`
+                + items.map(d => `<div class="check-detail-line">${esc(d)}</div>`).join('')
+                + `</details>`
+              : '';
+            return `
+          <div class="violation-item ${c.passed ? 'ok' : ''}">${c.passed ? '✓' : '⚠'} <strong>${esc(c.label)}</strong>${c.detail ? ': ' + esc(c.detail) : ''}${itemsHtml}</div>
+        `;
+          }).join('');
         const violationItems = (p.violations || [])
           .filter(v => !(v.resource && checkLabels.has(v.resource)))
           .map(v => `
@@ -508,11 +539,14 @@ _TEMPLATE = """<!DOCTYPE html>
         const detailBlock = (checkItems || violationItems || noDetailFallback)
           ? `<div class="plugin-violations">${checkItems}${violationItems}${noDetailFallback}</div>`
           : '';
+        const timeHtml = timeCheck
+          ? `<span class="plugin-time" title="${esc(timeCheck.label)}">${esc(timeCheck.detail)}</span>`
+          : '';
         return `
           <div class="plugin-block">
             <div class="plugin-line">
               <span>${p.passed ? '✅' : '❌'} ${esc(p.plugin)}</span>
-              <span class="badge ${tier}">${fmtScore(p.score)}</span>
+              <span class="plugin-line-right">${timeHtml}<span class="badge ${tier}">${fmtScore(p.score)}</span></span>
             </div>
             ${detailBlock}
           </div>

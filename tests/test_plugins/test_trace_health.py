@@ -14,6 +14,7 @@ def test_trace_health_passes_with_fixture(snapshot, contract):
     assert result.evidence["checks"] == {
         "trace status": {"passed": True, "detail": f"status={snapshot.status}"},
         "error spans": {"passed": True, "detail": "no error spans"},
+        "error time": {"passed": True, "detail": "no errors"},
     }
 
 
@@ -61,3 +62,33 @@ def test_trace_health_flags_error_spans(snapshot, contract):
 
     violation = next(v for v in result.violations if v.code == "trace_error_span")
     assert violation.resource == "error spans"
+
+    # The per-error breakdown (name/message/timestamp) must survive into the
+    # check's detail_items, not just the generic count -- this is what the
+    # report's chevron disclosure renders.
+    detail_items = result.evidence["checks"]["error spans"]["detail_items"]
+    assert len(detail_items) == 1
+    assert "validation_error" in detail_items[0]
+    assert "bad input" in detail_items[0]
+    assert "2026-01-01T10:00:14Z" in detail_items[0]
+
+
+def test_trace_health_reports_one_detail_item_per_error(snapshot, contract):
+    for i in range(2):
+        snapshot.spans.append(
+            SpanRecord(
+                id=f"span-error-{i}",
+                name=f"tool_{i}",
+                type="TOOL",
+                timestamp="2026-01-01T10:00:14Z",
+                success=False,
+                error_message=f"failure {i}",
+            )
+        )
+
+    result = TraceHealthPlugin().evaluate(snapshot, contract)
+
+    detail_items = result.evidence["checks"]["error spans"]["detail_items"]
+    assert len(detail_items) == 2
+    assert any("failure 0" in item for item in detail_items)
+    assert any("failure 1" in item for item in detail_items)

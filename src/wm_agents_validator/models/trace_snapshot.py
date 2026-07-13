@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from wm_agents_validator.contracts.expressions import glob_match
+
 DELEGATION_TOOL_NAMES = frozenset(
     {
         "start_new_conversation_with_agent",
@@ -289,3 +291,16 @@ def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None =
         if match:
             paths.append(match.group(1))
     return paths
+
+
+def _paths_match(pattern: str, path: str) -> bool:
+    """Compare a resolved resource path against an actually-referenced path, ignoring
+    a leading '/' on either side. Tools sometimes report the same underlying file as
+    project-relative ('services/...') and sometimes as absolute-looking
+    ('/services/...'), so a leading slash on either side must never by itself cause a
+    false negative. Shared by ``input_context.py`` (context-retrieval checks) and
+    ``output.py`` (``match`` clause evidence-span lookup).
+    """
+    norm_pattern = pattern.lstrip("/")
+    norm_path = path.lstrip("/")
+    return norm_path == norm_pattern or glob_match(norm_pattern, norm_path)

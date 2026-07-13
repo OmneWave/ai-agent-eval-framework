@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, Violation, score_from_checks
-from wm_agents_validator.models.trace_snapshot import TraceSnapshot
+from wm_agents_validator.models.trace_snapshot import SKILL_TOOL, TraceSnapshot, _span_base_name
 from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.plugins.timing import fmt_ms, sum_duration_ms
 
 
 class SkillsLoadedPlugin:
@@ -96,6 +97,17 @@ class SkillsLoadedPlugin:
         evidence["checks"] = checks
 
         passed, score = score_from_checks(checks)
+
+        # Informational only -- added after scoring so it never affects
+        # passed/score; see plugins/timing.py.
+        skill_load_spans = [
+            span for span in snapshot.spans if span.type == "TOOL" and _span_base_name(span.name) == SKILL_TOOL
+        ]
+        skill_load_ms = sum_duration_ms(skill_load_spans)
+        checks["skill load time"] = {
+            "passed": True,
+            "detail": f"{fmt_ms(skill_load_ms)} across {len(skill_load_spans)} call(s)",
+        }
 
         return PluginResult(
             plugin=self.name,
