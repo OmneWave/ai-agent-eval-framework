@@ -18,7 +18,7 @@ knowledge:
 resources:
   api:
     - name: petstore
-      path: services/petstore/designtime/petstore_API_REST_SERVICE.json
+      path: services/petstore/designtime/petstore_apiTarget.json
   page:
     - name: PetTable
       path: src/main/webapp/pages/PetTable/PetTable.html

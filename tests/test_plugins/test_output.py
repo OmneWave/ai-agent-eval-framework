@@ -1,7 +1,8 @@
 from wm_agents_validator.models.trace_snapshot import SpanRecord
-from wm_agents_validator.plugins.output import OutputPlugin
+from wm_agents_validator.models.workflow_contract import WriteSpec
+from wm_agents_validator.plugins.output import OutputPlugin, _match_satisfied
 
-_VARIABLE = "page.PetTable.variable.pet_table_variable"
+_VARIABLE = "page.PetTable.variable.findPetsByTagsVariable"
 _WIDGET = "page.PetTable.widget.swagger_findPetsByTagsTable1"
 
 
@@ -17,6 +18,15 @@ def test_output_passes_with_fixture(snapshot, contract):
         "passed": True,
         "detail": "no changes outside contract scope",
     }
+
+
+def test_output_reports_output_generation_time_without_affecting_score(snapshot, contract):
+    result = OutputPlugin().evaluate(snapshot, contract)
+    assert result.passed
+    assert result.score == 1.0
+    time_check = result.evidence["checks"]["output generation time"]
+    assert time_check["passed"] is True
+    assert "call(s)" in time_check["detail"]
 
 
 def test_output_flags_operation_mismatch(snapshot, contract):
@@ -68,6 +78,68 @@ def test_output_flags_unrelated_file_changed(snapshot, contract):
     assert violation.resource == "unrelated changes"
 
 
+def _nameless_variable_contract(contract, match):
+    # Swap only the variable entry for its policy-constrained (nameless +
+    # match) equivalent -- keep the widget/javascript entries as-is, or the
+    # unrelated-file-changed check would flag their file changes as no
+    # longer declared anywhere in `output`.
+    nameless_variable = WriteSpec(resource="page.PetTable.variable", operation="CREATE", match=match)
+    new_output = [nameless_variable] + [w for w in contract.output if w.resource != _VARIABLE]
+    return contract.model_copy(update={"output": new_output})
+
+
+def test_output_match_dict_form_matches_platform_tool_evidence(snapshot, contract):
+    # The fixture's edit_file_content stand-in span ALSO carries operationId
+    # today, which would let this pass without genuinely exercising the new
+    # widened-evidence path -- strip it so only ui_createApiAwareVariable does.
+    for span in snapshot.spans:
+        if span.id == "span-variable-write":
+            span.input = {k: v for k, v in span.input.items() if k != "operationId"}
+
+    policy_contract = _nameless_variable_contract(contract, {"operationId": "petstore_findPetsByTags"})
+    result = OutputPlugin().evaluate(snapshot, policy_contract)
+
+    assert result.passed
+    assert result.violations == []
+
+
+def test_output_match_mismatch_reports_new_violation_code(snapshot, contract):
+    policy_contract = _nameless_variable_contract(contract, {"operationId": "petstore_findPetsByOtherThing"})
+    result = OutputPlugin().evaluate(snapshot, policy_contract)
+
+    assert not result.passed
+    codes = [v.code for v in result.violations]
+    assert "output_match_mismatch" in codes
+    assert "output_operation_mismatch" not in codes  # operation itself WAS observed
+    assert result.evidence["checks"]["page.PetTable.variable"]["passed"] is False
+
+
+def test_output_match_list_form_matches_value_under_any_field(snapshot, contract):
+    # List shape: value must appear under *some* field, without naming operationId.
+    policy_contract = _nameless_variable_contract(contract, ["petstore_findPetsByTags"])
+    result = OutputPlugin().evaluate(snapshot, policy_contract)
+
+    assert result.passed
+    assert result.violations == []
+
+
+def test_match_satisfied_dict_and_list_shapes():
+    span_input = {"operationId": "petstore_findPetsByTags", "service": "petstore"}
+
+    # dict shape
+    assert _match_satisfied({"operationId": "petstore_findPetsByTags"}, span_input) is True
+    assert _match_satisfied({"operationId": "wrong"}, span_input) is False
+    assert _match_satisfied({"missingKey": "x"}, span_input) is False
+
+    # list shape -- value under any field, case-insensitive
+    assert _match_satisfied(["PETSTORE_FINDPETSBYTAGS"], span_input) is True
+    assert _match_satisfied(["not_present_anywhere"], span_input) is False
+
+    # empty -- no constraint
+    assert _match_satisfied({}, span_input) is True
+    assert _match_satisfied([], span_input) is True
+
+
 def test_output_never_referenced_resource_is_protected_via_unrelated_diff(snapshot, contract):
     # api.petstore is only ever referenced under input_context -- modifying
     # it should be caught as an unrelated change, with no separate
@@ -82,7 +154,7 @@ def test_output_never_referenced_resource_is_protected_via_unrelated_diff(snapsh
             timestamp="2026-01-01T10:00:06Z",
             end_time=None,
             level="DEFAULT",
-            input={"file_path": "services/petstore/designtime/petstore_API_REST_SERVICE.json"},
+            input={"file_path": "services/petstore/designtime/petstore_apiTarget.json"},
             output=None,
             success=True,
         )
@@ -93,4 +165,4 @@ def test_output_never_referenced_resource_is_protected_via_unrelated_diff(snapsh
     assert not result.passed
     codes = [v.code for v in result.violations]
     assert "unrelated_file_changed" in codes
-    assert "petstore_API_REST_SERVICE.json" in result.evidence["checks"]["unrelated changes"]["detail"]
+    assert "petstore_apiTarget.json" in result.evidence["checks"]["unrelated changes"]["detail"]

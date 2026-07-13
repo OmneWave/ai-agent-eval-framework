@@ -3,15 +3,16 @@ from __future__ import annotations
 import difflib
 import json
 
-from wm_agents_validator.contracts.expressions import glob_match
 from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, Violation, score_from_checks
 from wm_agents_validator.models.trace_snapshot import (
     SpanRecord,
     TraceSnapshot,
+    _paths_match,
     _span_base_name,
     extract_paths_from_input,
 )
 from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.plugins.timing import INPUT_GATHERING_TOOLS, fmt_ms, sum_duration_ms
 
 SpanIndexEntry = tuple[SpanRecord, list[str], str, str]
 """(span, extracted_paths, input_blob, output_blob) -- input/output are separate
@@ -26,24 +27,19 @@ actually carried it."""
 _CONTEXT_READ_TOOL = "read_files"
 
 
-def _paths_match(pattern: str, path: str) -> bool:
-    """Compare a resolved resource path against an actually-read path, ignoring
-    a leading '/' on either side. Tools sometimes report the same underlying
-    file as project-relative ('services/...') and sometimes as absolute-looking
-    ('/services/...'), so a leading slash on either side must never by itself
-    cause a false context_path_not_retrieved / unrelated_context_fetched.
-    """
-    norm_pattern = pattern.lstrip("/")
-    norm_path = path.lstrip("/")
-    return norm_path == norm_pattern or glob_match(norm_pattern, norm_path)
-
-
 class InputContextPlugin:
     """Checks whether the context an agent needed -- each ``input_context[]``
     entry's resolved resource path, plus its declared ``terms`` and any
     qualifier terms parsed out of the reference itself -- was actually
     retrieved through a tool call, instead of being assumed, guessed, or
     hallucinated.
+
+    "Retrieved" requires the referencing tool call to have actually
+    *succeeded* (see ``_check_paths``) -- a call that named the right path but
+    errored out doesn't count, since the content was never really delivered.
+    ``terms`` are checked against both a tool call's input *and* its output
+    (``_check_terms``), since either side is legitimate evidence the agent
+    engaged with that content.
 
     Qualifier terms parsed from ``output[]`` references are checked here too
     (not by the ``output`` plugin, which has no content-relevance check of its
@@ -77,25 +73,40 @@ class InputContextPlugin:
             all_expected_paths.append(path)
             terms = list(entry.terms) + list(ref_qualifiers)
 
-            retrieved, missing_paths, closest_match = self._check_paths([path], span_index)
+            retrieved, missing_paths, closest_match, failed_attempt = self._check_paths([path], span_index)
             found_terms, missing_terms, term_locations = self._check_terms(terms, span_index)
 
             reasons: list[str] = []
             if missing_paths:
-                hint = f" (closest tool read was: '{closest_match}')" if closest_match else " (no file reads observed at all)"
-                reasons.append(f"expected file never retrieved by any tool: {path}{hint}")
-                violations.append(
-                    Violation(
-                        code="context_path_not_retrieved",
-                        message=(
-                            f"Resource '{entry.resource}' expected to be read for context, "
-                            f"but no tool call ever referenced it{hint}"
-                        ),
-                        plugin=self.name,
-                        resource=entry.resource,
-                        evidence={"path": path, "closest_match": closest_match},
+                if failed_attempt:
+                    reasons.append(f"tool call referenced this file but the read failed: {path}")
+                    violations.append(
+                        Violation(
+                            code="context_path_read_failed",
+                            message=(
+                                f"Resource '{entry.resource}' was referenced by a tool call, "
+                                f"but that call did not succeed -- the content was never actually retrieved"
+                            ),
+                            plugin=self.name,
+                            resource=entry.resource,
+                            evidence={"path": path},
+                        )
                     )
-                )
+                else:
+                    hint = f" (closest tool read was: '{closest_match}')" if closest_match else " (no file reads observed at all)"
+                    reasons.append(f"expected file never retrieved by any tool: {path}{hint}")
+                    violations.append(
+                        Violation(
+                            code="context_path_not_retrieved",
+                            message=(
+                                f"Resource '{entry.resource}' expected to be read for context, "
+                                f"but no tool call ever referenced it{hint}"
+                            ),
+                            plugin=self.name,
+                            resource=entry.resource,
+                            evidence={"path": path, "closest_match": closest_match},
+                        )
+                    )
             if missing_terms:
                 reasons.append(f"term(s) never observed in any tool call's input or output: {missing_terms}")
                 violations.append(
@@ -175,6 +186,20 @@ class InputContextPlugin:
 
         passed, score = score_from_checks(checks)
 
+        # Informational only -- added after scoring so it never affects
+        # passed/score (this isn't a pass/fail condition, just a number to
+        # surface alongside this plugin's own checks; see plugins/timing.py).
+        input_gathering_spans = [
+            span
+            for span in snapshot.spans
+            if span.type == "TOOL" and _span_base_name(span.name) in INPUT_GATHERING_TOOLS
+        ]
+        input_gathering_ms = sum_duration_ms(input_gathering_spans)
+        checks["input gathering time"] = {
+            "passed": True,
+            "detail": f"{fmt_ms(input_gathering_ms)} across {len(input_gathering_spans)} call(s)",
+        }
+
         return PluginResult(
             plugin=self.name,
             passed=passed,
@@ -218,12 +243,28 @@ class InputContextPlugin:
 
     def _check_paths(
         self, expected_paths: list[str], span_index: list[SpanIndexEntry]
-    ) -> tuple[set[str], list[str], str | None]:
+    ) -> tuple[set[str], list[str], str | None, bool]:
+        """Returns (retrieved, missing, closest_match, missing_due_to_failed_attempt).
+
+        A path only counts as "retrieved" if some tool call referencing it also
+        *succeeded* (``span.success is not False`` -- ``None``/unset stays
+        permissive since not every tool sets it explicitly). A tool call that
+        referenced the right path but errored out (file not found, permission
+        denied, etc.) never actually delivered the content, so it shouldn't
+        count as context having been read, even though the path shows up in
+        that call's input.
+        """
         all_seen_paths = [p for _, paths, _, _ in span_index for p in paths]
+        successful_paths = {p for span, paths, _, _ in span_index if span.success is not False for p in paths}
+        failed_paths = {p for span, paths, _, _ in span_index if span.success is False for p in paths}
+
         retrieved = {
-            expected for expected in expected_paths if any(_paths_match(expected, seen) for seen in all_seen_paths)
+            expected for expected in expected_paths if any(_paths_match(expected, seen) for seen in successful_paths)
         }
         missing = [p for p in expected_paths if p not in retrieved]
+        missing_due_to_failed_attempt = any(
+            any(_paths_match(expected, seen) for seen in failed_paths) for expected in missing
+        )
 
         closest_match = None
         if missing and all_seen_paths:
@@ -234,7 +275,7 @@ class InputContextPlugin:
                     if ratio > best_ratio:
                         best_ratio = ratio
                         closest_match = seen
-        return retrieved, missing, closest_match
+        return retrieved, missing, closest_match, missing_due_to_failed_attempt
 
     def _check_terms(
         self, terms: list[str], span_index: list[SpanIndexEntry]

@@ -109,3 +109,25 @@ def test_resolve_malformed_reference_raises(registry):
 def test_resolve_malformed_page_reference_raises(registry):
     with pytest.raises(KeyError):
         registry.resolve("page.CreateProduct.not_a_subtype.foo")
+
+
+def test_resolve_page_scoped_nameless_variable_no_entry_required(registry):
+    # Policy-constrained reference: 3 parts, no name segment. Resolves to the
+    # same convention path as any name-qualified entry of this subtype, with
+    # no registry entry required to look up (this page's `variable` list
+    # already has `product_variable`, but the nameless form doesn't touch it).
+    path, qualifiers = registry.resolve("page.CreateProduct.variable")
+    assert path == "src/main/webapp/pages/CreateProduct/CreateProduct.variables.json"
+    assert qualifiers == []
+
+
+def test_resolve_page_scoped_nameless_works_with_empty_bucket():
+    registry = ResourceRegistry(page=[PageEntry(name="CreateProduct")])  # no variable entries at all
+    path, qualifiers = registry.resolve("page.CreateProduct.variable")
+    assert path == "src/main/webapp/pages/CreateProduct/CreateProduct.variables.json"
+    assert qualifiers == []
+
+
+def test_resolve_page_scoped_nameless_malformed_subtype_raises(registry):
+    with pytest.raises(KeyError):
+        registry.resolve("page.CreateProduct.not_a_subtype")

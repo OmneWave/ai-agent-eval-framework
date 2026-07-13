@@ -3,6 +3,7 @@ from __future__ import annotations
 from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, Violation, score_from_checks
 from wm_agents_validator.models.trace_snapshot import TraceSnapshot
 from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.plugins.timing import fmt_ms, sum_duration_ms
 
 
 class ToolCallsPlugin:
@@ -65,6 +66,15 @@ class ToolCallsPlugin:
             checks[forbidden_label] = {"passed": True, "detail": "no forbidden tool used"}
 
         passed, score = score_from_checks(checks)
+
+        # Informational only -- added after scoring so it never affects
+        # passed/score; see plugins/timing.py.
+        tool_spans = [span for span in snapshot.spans if span.type == "TOOL"]
+        tool_calls_ms = sum_duration_ms(tool_spans)
+        checks["tool call time"] = {
+            "passed": True,
+            "detail": f"{fmt_ms(tool_calls_ms)} across {len(tool_spans)} call(s)",
+        }
 
         return PluginResult(
             plugin=self.name,

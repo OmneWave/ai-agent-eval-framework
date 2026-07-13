@@ -34,11 +34,13 @@ def _extract_checks(evidence: dict) -> list[PluginCheck]:
     for label, info in checks.items():
         if not isinstance(info, dict):
             continue
+        detail_items = info.get("detail_items")
         result.append(
             PluginCheck(
                 label=str(label),
                 passed=bool(info.get("passed", True)),
                 detail=str(info.get("detail") or ""),
+                detail_items=[str(item) for item in detail_items] if isinstance(detail_items, list) else [],
             )
         )
     return result

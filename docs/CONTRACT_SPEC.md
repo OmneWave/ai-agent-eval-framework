@@ -87,8 +87,17 @@ resources:
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | `string` | yes | The resource's real catalog identity. |
+| `name` | `string` | yes, **if the entry exists** | The resource's real catalog identity. |
 | `path` | `string` | no | Explicit file path override. **If omitted, derived automatically** from type + `name` (+ page name, for page-scoped types) via the convention table below. |
+
+**The entry itself is optional for page-scoped subtypes (`variable`/`widget`/`javascript`).**
+`name` is only required *if you write an entry at all* — for `variable`/`widget`/`javascript`,
+writing one is now itself optional: skip it entirely and reference `page.<page>.<subtype>` (no
+name) from `input_context`/`output` to get the policy-constrained form (see
+["Identity-constrained vs. policy-constrained references"](#identity-constrained-vs-policy-constrained-references)).
+Only write an entry — with its required `name` — when the task dictates an exact resource name.
+Flat types (`api`, `javaservice`, `db`, `design_tokens`) and the `page` entry itself are
+unaffected by this — an entry (and its `name`) is still always required for those.
 
 ### Fixed resource types
 
@@ -120,6 +129,26 @@ dotted string resolved against the registry:
 | `<type>.<name>` | a flat-type entry, e.g. `api.hrdb` |
 | `page.<page_name>` | a page's own file, e.g. `page.Main` |
 | `page.<page_name>.<widget\|variable\|javascript>.<name>` | a page-scoped entry, e.g. `page.Main.variable.mainVariable` |
+| `page.<page_name>.<widget\|variable\|javascript>` (no `<name>`) | the same convention path, no registry entry required — see "Identity-constrained vs. policy-constrained references" below |
+
+#### Identity-constrained vs. policy-constrained references
+
+Every page-scoped reference above (4 parts, with a `<name>`) is **identity-constrained**: the
+resource must have a specific, pre-registered name, and the trace must have created/touched
+exactly that name. Use this when the task's prompt (or the surrounding spec) actually dictates
+what the resource must be called — e.g. binding a specific existing widget.
+
+Dropping the trailing `<name>` segment (3 parts, e.g. `page.PetTable.variable`) makes the
+reference **policy-constrained**: it resolves to the same convention path, but requires no
+pre-registered entry and doesn't care what the model names the thing it creates. Use this when
+the task legitimately gives the model free choice over naming (e.g. "bind list1 to the
+findByTags operation" doesn't say what the resulting variable should be called) — pair it with
+a `match` clause (see [output](#output)) to still verify the resource has the right *properties*,
+just not a specific name.
+
+**Constraint**: a policy-constrained reference always resolves to the convention path — it has
+no registry entry to read a per-entry `path:` override from. If a page-scoped subtype ever needs
+a non-convention path, reference it by name (identity-constrained form) instead.
 
 **Generic qualifier rule**: any reference segments left over *after* the registry lookup
 succeeds become **qualifier terms**, checked exactly like a `terms` entry (substring match
@@ -181,6 +210,7 @@ fail the plugin, not just dilute its score.
 output:
   - resource: string                      # required
     operation: CREATE | UPDATE | DELETE     # required
+    match: {field: value, ...} | [value, ...]  # optional, default {}
 ```
 
 Every entry means: **this resource must be created/updated/deleted.**
@@ -189,6 +219,43 @@ Every entry means: **this resource must be created/updated/deleted.**
 |---|---|---|---|---|
 | `resource` | `string` | yes | any valid dotted reference | Resolved via `resources`. |
 | `operation` | `string` | yes | `CREATE`, `UPDATE`, `DELETE` | The expected file operation. Checked against the trace's actual `FileChangeRecord.operation` — `CREATE`/`UPDATE` accept an observed `write` or `edit`; `DELETE` requires an observed `delete`. Mismatch → `output_operation_mismatch`. |
+| `match` | `dict` or `list` | no, default `{}` | any field:value pairs, or any list of values | Evidence assertion against the *same* tool call whose input also matched this entry's resolved path (an "evidencing call") — see below. Mismatch → `output_match_mismatch`. |
+
+### `match` — exact evidence assertion (not substring)
+
+**`match` is always an EXACT match, never substring** — this is the one thing to not confuse it
+for. `terms` (see [input_context](#input_context)) is a *substring* search, *anywhere in the whole
+trace*; `match` is an *exact* comparison, scoped to *one specific call*. Two shapes:
+
+- **dict form** — `{field: value, ...}`: every key must exist literally in the evidencing call's
+  structured input, and its value must equal the given value exactly (case-insensitive). Use when
+  the field name is known, e.g.:
+  ```yaml
+  match:
+    operationId: petstore_findPetsByTags
+  ```
+- **list form** — `[value, ...]`: every value must equal exactly *some* field's value in that same
+  call's input, whichever key holds it. Use when the expected value is known but the field name
+  isn't (or shouldn't be hardcoded, e.g. it may differ across tool versions), e.g.:
+  ```yaml
+  match: [petstore_findPetsByTags]
+  ```
+
+**Coherence rule**: everything in `match` must be satisfied on the *same* call that also matched
+the resolved `resource` path — never split across two different calls. This is found by first
+narrowing the trace to "evidencing spans" (`TOOL` spans whose extracted input paths match the
+resolved path), then checking `match` only against those spans' own input. A call that only
+matches the path but not every `match` condition, or a *different* call elsewhere in the trace
+that happens to carry one of the `match` values but never touched this resource, never counts.
+
+**Still permissive across *which* call**: if multiple evidencing calls exist (e.g. a retry after
+an earlier mistake), only one of them needs to satisfy `match` (`any()` match, same "first match
+anywhere wins" philosophy as `terms`) — a wrong-then-corrected attempt still passes. This is a
+deliberate softness, not a bug: `match`'s purpose is to prove the resource was created with the
+right properties *at least once* in the trace, not that the agent got it right immediately.
+
+`match` defaults to `{}` — a contract with no `match` clause behaves exactly as before this field
+existed.
 
 Every resource resolved from `output` collectively defines the **exhaustive** set of things
 allowed to change. Anything in the trace's file changes that doesn't match any `output` entry
@@ -308,9 +375,7 @@ resources:
   page:
     - name: PetTable
       path: src/main/webapp/pages/PetTable/PetTable.html
-      variable:
-        - name: pet_table_variable
-          path: src/main/webapp/pages/PetTable/PetTable.variables.json
+      # no `variable:` entry needed -- output below references it policy-first
       widget:
         - name: swagger_findPetsByTagsTable1
           path: src/main/webapp/pages/PetTable/PetTable.html
@@ -319,9 +384,11 @@ input_context:
   - resource: api.petstore.petstore_findPetsByTags
 
 output:
-  - resource: page.PetTable.variable.pet_table_variable
+  - resource: page.PetTable.variable          # policy-constrained: the model may name this anything
     operation: CREATE
-  - resource: page.PetTable.widget.swagger_findPetsByTagsTable1
+    match:
+      operationId: petstore_findPetsByTags
+  - resource: page.PetTable.widget.swagger_findPetsByTagsTable1   # identity-constrained: name is dictated
     operation: UPDATE
 
 tools:

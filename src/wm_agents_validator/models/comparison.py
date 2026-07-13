@@ -45,6 +45,11 @@ class PluginCheck(BaseModel):
     label: str
     passed: bool
     detail: str = ""
+    detail_items: list[str] = Field(default_factory=list)
+    """Optional per-item breakdown behind `detail`'s one-line summary (e.g. one
+    line per error span, each with its own name/message/timestamp) -- rendered
+    as a collapsible disclosure so a summary like "4 error span(s) present"
+    doesn't hide the actual errors, without cluttering the collapsed view."""
 
 
 class PluginScore(BaseModel):

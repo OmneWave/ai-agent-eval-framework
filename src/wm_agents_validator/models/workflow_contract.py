@@ -68,6 +68,13 @@ class ResourceRegistry(BaseModel):
         Any reference segments left over after the registry lookup succeeds become
         qualifier terms, checked like a ``terms`` entry -- see the "References and
         qualifiers" section of the contract schema.
+
+        A page-scoped reference may omit the final name segment (``page.<page>.<subtype>``,
+        e.g. ``page.PetTable.variable``) -- this is the policy-constrained form: it resolves
+        to the same convention path as any name-qualified entry of that subtype, without
+        requiring a specific ``name`` to be pre-registered. Use this (paired with a
+        ``WriteSpec.match`` clause) when a task doesn't dictate what the model should call
+        the resource it creates.
         """
         parts = ref.split(".")
         if not parts or not parts[0]:
@@ -82,6 +89,16 @@ class ResourceRegistry(BaseModel):
                 raise KeyError(f"resource '{ref}' not found: no page named '{parts[1]}'")
             if len(parts) == 2:
                 return page.path or _default_path("page", page.name), []
+            if len(parts) == 3:
+                # Policy-constrained reference (no name segment) -- resolves to the
+                # same convention path as any name-qualified entry of this subtype,
+                # with no registry entry required. Only ever the convention path: a
+                # per-entry `path:` override can't apply since there's no entry to
+                # read it from -- if a page-scoped subtype ever needs an override
+                # path, it must be referenced by name (4-part form) instead.
+                if parts[2] not in _PAGE_SUBTYPES:
+                    raise KeyError(f"malformed page resource reference '{ref}'")
+                return _default_path(parts[2], "", page=page.name), []
             if len(parts) < 4 or parts[2] not in _PAGE_SUBTYPES:
                 raise KeyError(f"malformed page resource reference '{ref}'")
             bucket = getattr(page, parts[2])
@@ -123,6 +140,23 @@ class WriteSpec(BaseModel):
 
     resource: str
     operation: Literal["CREATE", "UPDATE", "DELETE"]
+    match: dict[str, str | int | bool] | list[str] = Field(default_factory=dict)
+    """Evidence assertion against the *same* evidencing tool call's structured input
+    -- unlike ``terms`` (substring match, anywhere in the whole trace), ``match`` is
+    always an EXACT match (case-insensitive), scoped to the one call that also
+    matched the resolved ``resource`` path. Two shapes:
+
+    - dict form -- exact key=value: every key must exist literally in that call's
+      input, and its value must equal the given value exactly. Use when the field
+      name is known (e.g. ``{operationId: petstore_findPetsByTags}``).
+    - list form -- exact value, unknown field: each value must equal exactly *some*
+      field's value in that call's input, whatever key it's under. Use when the
+      expected value is known but not (or shouldn't be hardcoded as) the field name
+      holding it (e.g. ``[petstore_findPetsByTags]``).
+
+    Never substring/fuzzy in either form. Defaults to ``{}`` (falsy, same as an
+    empty list) -- every contract with no ``match`` clause is unaffected. See
+    docs/CONTRACT_SPEC.md."""
 
 
 class ToolsSpec(BaseModel):

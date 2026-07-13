@@ -14,6 +14,22 @@ def test_resource_usage_reports_metrics(snapshot, contract):
     assert metrics["generation_count"] == 2
 
 
+def test_resource_usage_populates_checks_for_report_display(snapshot, contract):
+    # Regression: this plugin's evidence must include a "checks" dict, or the
+    # console/HTML reports (which only render evidence["checks"]) show nothing
+    # for resource_usage at all, even though metrics were always computed.
+    # Time-breakdown metrics (input gathering/output generation/tool calls/
+    # errors) are reported by input_context/output/tool_calls/trace_health
+    # instead -- see tests/test_plugins/test_timing.py.
+    result = ResourceUsagePlugin().evaluate(snapshot, contract)
+    checks = result.evidence["checks"]
+    assert set(checks) == {"duration", "tokens", "cost"}
+    assert all(check["passed"] is True for check in checks.values())
+    assert checks["duration"]["detail"] == "45,000ms"
+    assert checks["tokens"]["detail"] == "4,000"
+    assert checks["cost"]["detail"] == "$0.0300"
+
+
 def test_resource_usage_always_passes_regardless_of_trace_content(snapshot, contract):
     # No contract-declared budget/limit exists anymore -- this plugin is
     # purely observational and never fails or scores, no matter the trace.

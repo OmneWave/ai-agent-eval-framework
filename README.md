@@ -207,8 +207,11 @@ input_context:                      # every entry means "must be READ somewhere 
     terms: [string]                     # extra ids/keywords that must appear in some tool call's input/output
 
 output:                             # every entry means "must be CREATED/UPDATED/DELETED"
-  - resource: string
+  - resource: string                  # identity-constrained (exact name) or policy-constrained
+                                       # (page.<page>.<subtype>, no name) -- see CONTRACT_SPEC.md
     operation: CREATE | UPDATE | DELETE
+    match: {field: value} | [value]     # optional, default {} -- exact-match evidence assertion
+                                         # against the same call that created/updated the resource
 
 tools:                               # one flat, contract-wide tool policy
   required: [string]
@@ -253,7 +256,7 @@ without a separate `operationId`/`class`+`method`/`table_name`+`column_name` fie
 | `skills_loaded` | Required skill(s) loaded and succeeded, and no extra skills were loaded beyond the declared `required`/`optional` sets. |
 | `input_context` | Each declared `input_context[]` entry must have its resolved resource actually read, and its `terms` plus any qualifier terms parsed from the reference must appear in some tool-call input or output. The plugin also reports unrelated reads outside the declared resource/knowledge scope. |
 | `tool_calls` | The contract-wide `tools` policy is enforced: every `required` tool must appear in the trace and no `forbidden` tool may appear. |
-| `output` | Each declared `output[]` entry must be created/updated/deleted as specified, and no unrelated file changes are allowed outside the declared output scope. |
+| `output` | Each declared `output[]` entry must be created/updated/deleted as specified, and no unrelated file changes are allowed outside the declared output scope. A `match` clause, if present, additionally requires the resource's properties (e.g. which operation it's bound to) to be verified on the same call that created/updated it -- for resources whose exact name isn't dictated by the task. |
 | `trace_health` | The trace must not be in an error state, must not contain error spans, and must pass build validation when a Java service resource is part of the output. |
 | `resource_usage` | Duration, token, and cost metrics are reported for observability only; this plugin does not score or fail the run because no contract budget gate is enforced. |
 
@@ -278,7 +281,7 @@ aggregating binary outcomes over many runs, not from softening any single run's 
 `compare-traces` verifies a batch of traces — optionally across several contracts and several LLMs at once — and renders a single self-contained HTML report:
 
 - Sortable table with Contract, Model, User, Agent, Duration, Tokens, Cost, Score, Status, and a per-plugin status "dot strip" for an at-a-glance view of every plugin's pass/fail.
-- A **plugin pass-rate heatmap**, toggleable between "group by Model" and "group by Contract" — pass rate (primary) + average score (secondary, diagnostic-only) per plugin per group, so you can immediately see e.g. "which model is weakest on `input_context`" or "which contract has the most `tool_calls` violations".
+- A **per-plugin score heatmap**, toggleable between "group by Model" and "group by Contract" — average score per plugin per group (pass rate shown in the hover tooltip), so you can immediately see e.g. "which model is weakest on `input_context`" or "which contract has the most `tool_calls` violations".
 - Contract / Model / Status filters + free-text search, all live-updating the table, summary cards, and heatmap together.
 - Per-trace drill-down (click a row) with full plugin scores, violations, and per-generation token/cost breakdown.
 
