@@ -177,6 +177,9 @@ uv run run-verify --list-plugins
 
 Full field-by-field reference, possible values, and rationale: [docs/CONTRACT_SPEC.md](docs/CONTRACT_SPEC.md). Summary below.
 
+For Contract definition refere: [docs/Defining_CONTRACT.md](docs/Defining_CONTRACT.md). Summary below.
+
+
 A contract has three top-level sections plus a resource registry:
 
 ```yaml
