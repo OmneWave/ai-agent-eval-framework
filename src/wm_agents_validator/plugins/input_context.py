@@ -39,11 +39,17 @@ class InputContextPlugin:
     errored out doesn't count, since the content was never really delivered.
     ``terms`` are checked against both a tool call's input *and* its output
     (``_check_terms``), since either side is legitimate evidence the agent
-    engaged with that content.
+    engaged with that content -- but only among *read*-tool calls
+    (``INPUT_GATHERING_TOOLS``): the whole point of ``input_context`` is to
+    verify what got read for context, so a term should only count as grounded
+    if a read call actually carried it, not merely because it appears
+    somewhere in an unrelated write call.
 
     Qualifier terms parsed from ``output[]`` references are checked here too
     (not by the ``output`` plugin, which has no content-relevance check of its
-    own), under a separate rollup.
+    own), under a separate rollup -- these stay trace-wide (not read-tool
+    restricted), since an output qualifier like an ``operationId`` typically
+    surfaces in the *write*/creation call itself, not a read call.
 
     It also checks the inverse direction: files read via ``read_files`` that
     don't match any resource declared under ``input_context`` or ``output``
@@ -74,7 +80,9 @@ class InputContextPlugin:
             terms = list(entry.terms) + list(ref_qualifiers)
 
             retrieved, missing_paths, closest_match, failed_attempt = self._check_paths([path], span_index)
-            found_terms, missing_terms, term_locations = self._check_terms(terms, span_index)
+            found_terms, missing_terms, term_locations = self._check_terms(
+                terms, span_index, restrict_to_tools=INPUT_GATHERING_TOOLS
+            )
 
             reasons: list[str] = []
             if missing_paths:
@@ -278,13 +286,25 @@ class InputContextPlugin:
         return retrieved, missing, closest_match, missing_due_to_failed_attempt
 
     def _check_terms(
-        self, terms: list[str], span_index: list[SpanIndexEntry]
+        self,
+        terms: list[str],
+        span_index: list[SpanIndexEntry],
+        restrict_to_tools: frozenset[str] | None = None,
     ) -> tuple[list[str], list[str], dict[str, str]]:
         """A term counts as grounded if it shows up in a tool call's input
         *or* its output -- either is legitimate evidence the agent actually
         engaged with it. ``locations`` records which side(s) each found term
         came from.
+
+        ``restrict_to_tools``, when given, narrows the search to only calls to
+        those tools (matched via ``_span_base_name``) -- e.g. ``terms`` under
+        ``input_context[]`` should only be grounded by *read* tool calls, not
+        by an unrelated write call that happens to mention the same word.
         """
+        if restrict_to_tools is not None:
+            span_index = [
+                entry for entry in span_index if _span_base_name(entry[0].name) in restrict_to_tools
+            ]
         found: list[str] = []
         missing: list[str] = []
         locations: dict[str, str] = {}

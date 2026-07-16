@@ -19,17 +19,26 @@ _OPERATION_TO_FILE_CHANGE_OPS: dict[str, set[str]] = {
 
 
 def _match_satisfied(match: dict | list, span_input: dict) -> bool:
-    """Checks a ``WriteSpec.match`` clause against one evidencing tool call's
-    structured input. Always an exact match (case-insensitive), never substring.
+    """Checks a ``WriteSpec.match`` clause against one evidencing *write*-tool
+    call's structured input only -- ``match`` verifies what a write call
+    actually did, which is a distinct question from whether the right content
+    was *read* (that's ``terms``/``input_context.py``'s job, checked against
+    read-tool calls' input and output there). Keeping the two cleanly split by
+    tool category, not blended, is deliberate.
 
-    - dict form: every key must exist literally in ``span_input``, value exact match.
-    - list form: every value must equal *some* value in ``span_input``, whichever
-      key holds it -- for when the field name isn't known/shouldn't be hardcoded.
+    - dict form: every key must exist literally in ``span_input``, value exact
+      match (case-insensitive) -- for tools with flat, known-field-name kwargs
+      (e.g. ``ui_createApiAwareVariable``'s ``operationId``).
+    - list form: every value must appear as a *substring* of some value in
+      ``span_input`` (case-insensitive) -- substring, not exact-equality,
+      deliberately: a short keyword can never equal a whole field's value
+      (e.g. a widget tag inside ``write_file``'s ``file_content``), only
+      appear within it.
     """
     if isinstance(match, dict):
         return all(str(span_input.get(k, "")).lower() == str(v).lower() for k, v in match.items())
-    existing_values = {str(v).lower() for v in span_input.values()}
-    return all(str(v).lower() in existing_values for v in match)
+    existing_values = [str(v).lower() for v in span_input.values()]
+    return all(any(str(v).lower() in existing for existing in existing_values) for v in match)
 
 
 class OutputPlugin:
@@ -43,12 +52,16 @@ class OutputPlugin:
     by the unrelated-diff check below.
 
     A ``WriteSpec.match`` clause (only checked when non-empty) additionally
-    requires that the *same* tool call whose input matched the resolved
+    requires that the *same* write-tool call whose input matched the resolved
     resource path also satisfy the declared key=value (or value-only)
     assertions -- see ``_match_satisfied``. This is what makes a name-less,
     policy-constrained ``resource`` reference (e.g. ``page.PetTable.variable``)
     meaningful rather than a near no-op: it verifies which properties the
     created/updated resource actually has, independent of what it was named.
+    Evidencing spans are restricted to ``OUTPUT_GENERATION_TOOLS`` -- ``match``
+    is about what a *write* call did, not about verifying read content (that's
+    ``terms``/``input_context.py``'s job, checked separately against read-tool
+    calls).
 
     Every check must pass for ``passed=True`` -- no partial credit (see the
     Scoring section of the contract schema).
@@ -76,42 +89,40 @@ class OutputPlugin:
             operation_ok = bool(matching_ops & expected_ops)
 
             match_ok = True
-            match_detail = ""
+            evidencing_names: list[str] = []
             if write.match:  # falsy for both {} and [] -- no special-casing needed
                 evidencing_spans = [
                     span
                     for span in snapshot.spans
                     if span.type == "TOOL"
+                    and _span_base_name(span.name) in OUTPUT_GENERATION_TOOLS
                     and any(
                         _paths_match(path, p)
                         for p in extract_paths_from_input(span.input or {}, _span_base_name(span.name))
                     )
                 ]
                 match_ok = any(_match_satisfied(write.match, span.input or {}) for span in evidencing_spans)
-                if not match_ok:
-                    evidencing_names = [_span_base_name(s.name) for s in evidencing_spans]
-                    match_detail = (
-                        f"; match clause {write.match} not satisfied by any evidencing call ({evidencing_names})"
-                    )
+                evidencing_names = [_span_base_name(s.name) for s in evidencing_spans]
 
             passed_entry = operation_ok and match_ok
             if passed_entry:
                 checks[write.resource] = {"passed": True, "detail": f"{write.operation} observed on {path}"}
             else:
-                detail = (
-                    f"expected {write.operation} on {path}, "
-                    f"observed operations: {sorted(matching_ops) or 'none'}{match_detail}"
-                )
+                # Report the ACTUAL failure, not a fixed template -- when the
+                # operation itself was observed fine and only `match` failed,
+                # leading with "expected CREATE... observed: ['write']" reads
+                # as an operation mismatch that never happened.
+                if not operation_ok:
+                    detail = f"expected {write.operation} on {path}, observed operations: {sorted(matching_ops) or 'none'}"
+                    code = "output_operation_mismatch"
+                else:
+                    detail = f"{write.operation} observed on {path}, but match clause {write.match} not satisfied by any evidencing call ({evidencing_names})"
+                    code = "output_match_mismatch"
                 checks[write.resource] = {"passed": False, "detail": detail}
-                code = "output_match_mismatch" if operation_ok and not match_ok else "output_operation_mismatch"
                 violations.append(
                     Violation(
                         code=code,
-                        message=(
-                            f"Resource '{write.resource}' expected {write.operation} on {path}"
-                            + (f" matching {write.match}" if write.match else "")
-                            + f", observed: {sorted(matching_ops) or 'none'}{match_detail}"
-                        ),
+                        message=f"Resource '{write.resource}': {detail}",
                         plugin=self.name,
                         resource=write.resource,
                         evidence={
