@@ -1,4 +1,4 @@
-workflow: screenshot_to_code_dashboard
+workflow: screenshot_to_code_registerCompany
 contract_version: "1.0.0"
 
 skills:
@@ -12,7 +12,9 @@ skills:
     - pattern-detection
     - new_page_from_screenshot_workflow
     - screenshot-to-wavemaker-web
-    - example-dashboard
+    - advanced-wizard
+    - advanced-form
+    
   optional:
   - foundation-tokens
   - widget-templates
@@ -25,25 +27,26 @@ skills:
   - advanced-combined
   - output-cloud
 
-knowledge: []
-
+knowledge:
+  - /catalog/variables/ModelVariable/ModelVariable.md
 resources:
   page:
-    - name: Dashboard
-      path: src/main/webapp/pages/Dashboard/Dashboard.html
+    - name: RegisterCompany
+      path: src/main/webapp/pages/RegisterCompany/RegisterCompany.html
     - name: header
       path: src/main/webapp/pages/header/header.html
     - name: leftnav
       path: src/main/webapp/pages/leftnav/leftnav.html
-    - name: dashboardLeftnav
-      path: src/main/webapp/pages/dashboardLeftnav/dashboardLeftnav.html
-    - name: dashboardHeader
-      path: src/main/webapp/pages/dashboardHeader/dashboardHeader.html
+    - name: RegisterCompanyLeftnav
+      path: src/main/webapp/pages/RegisterCompanyLeftnav/RegisterCompanyLeftnav.html
+    - name: RegisterCompanyHeader
+      path: src/main/webapp/pages/RegisterCompanyHeader/RegisterCompanyHeader.html
+
   design_tokens:
     - name: tokens-plan
-      path: src/main/webapp/pages/Dashboard/Dashboard.tokens-plan.json
+      path: src/main/webapp/pages/RegisterCompany/RegisterCompany.tokens-plan.json
     - name: layout-plan
-      path: src/main/webapp/pages/Dashboard/Dashboard.layout-plan.json
+      path: src/main/webapp/pages/RegisterCompany/RegisterCompany.layout-plan.json
     - name: components-anchor
       path: src/main/webapp/design-tokens/overrides/components/anchor/anchor.json
     - name: components-button
@@ -65,20 +68,13 @@ resources:
     - name: components-page-left-nav
       path: src/main/webapp/design-tokens/overrides/components/page-left-nav/page-left-nav.json
 
-input_context:
-  - resource: page.header
-  - resource: page.leftnav
+input_context: []
+  # - resource: variables.ModelVariable
 
 output:
-  - resource: page.Dashboard
-    operation: CREATE
-  - resource: page.dashboardHeader
-    operation: CREATE
-  - resource: page.dashboardLeftnav
+  - resource: page.RegisterCompany
     operation: CREATE
   - resource: design_tokens.components-icon
-    operation: CREATE
-  - resource: design_tokens.components-picture
     operation: CREATE
   - resource: design_tokens.tokens-plan
     operation: CREATE

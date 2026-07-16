@@ -1,4 +1,4 @@
-workflow: screenshot_to_code_dashboard
+workflow: screenshot_to_code_cards
 contract_version: "1.0.0"
 
 skills:
@@ -12,7 +12,7 @@ skills:
     - pattern-detection
     - new_page_from_screenshot_workflow
     - screenshot-to-wavemaker-web
-    - example-dashboard
+
   optional:
   - foundation-tokens
   - widget-templates
@@ -25,25 +25,28 @@ skills:
   - advanced-combined
   - output-cloud
 
-knowledge: []
+knowledge: 
+  - /catalog/variables/BaseVariable/BaseVariable.md
+  - /catalog/variables/ModelVariable/ModelVariable.md
 
 resources:
   page:
-    - name: Dashboard
-      path: src/main/webapp/pages/Dashboard/Dashboard.html
+    - name: Cards
+      path: src/main/webapp/pages/Cards/Cards.html
     - name: header
       path: src/main/webapp/pages/header/header.html
     - name: leftnav
       path: src/main/webapp/pages/leftnav/leftnav.html
-    - name: dashboardLeftnav
-      path: src/main/webapp/pages/dashboardLeftnav/dashboardLeftnav.html
-    - name: dashboardHeader
-      path: src/main/webapp/pages/dashboardHeader/dashboardHeader.html
+    - name: cardsHeader
+      path: src/main/webapp/pages/cardsHeader/cardsHeader.html
+    - name: cardsLeftnav
+      path: src/main/webapp/pages/cardsLeftnav/cardsLeftnav.html
+
   design_tokens:
     - name: tokens-plan
-      path: src/main/webapp/pages/Dashboard/Dashboard.tokens-plan.json
+      path: src/main/webapp/pages/Cards/Cards.tokens-plan.json
     - name: layout-plan
-      path: src/main/webapp/pages/Dashboard/Dashboard.layout-plan.json
+      path: src/main/webapp/pages/Cards/Cards.layout-plan.json
     - name: components-anchor
       path: src/main/webapp/design-tokens/overrides/components/anchor/anchor.json
     - name: components-button
@@ -58,25 +61,31 @@ resources:
       path: src/main/webapp/design-tokens/overrides/components/picture/picture.json
     - name: components-label
       path: src/main/webapp/design-tokens/overrides/components/label/label.json
-    - name: global-color-light
-      path: src/main/webapp/design-tokens/overrides/global/color/color.light.json
     - name: components-page-header
       path: src/main/webapp/design-tokens/overrides/components/page-header/page-header.json
     - name: components-page-left-nav
       path: src/main/webapp/design-tokens/overrides/components/page-left-nav/page-left-nav.json
+    - name: global-color-light
+      path: src/main/webapp/design-tokens/overrides/global/color/color.light.json
 
 input_context:
   - resource: page.header
   - resource: page.leftnav
 
 output:
-  - resource: page.Dashboard
+  - resource: page.Cards
     operation: CREATE
-  - resource: page.dashboardHeader
+  - resource: page.cardsHeader
     operation: CREATE
-  - resource: page.dashboardLeftnav
+  - resource: page.cardsLeftnav
     operation: CREATE
   - resource: design_tokens.components-icon
+    operation: CREATE
+  - resource: design_tokens.components-button
+    operation: CREATE
+  - resource: design_tokens.components-page-header
+    operation: CREATE
+  - resource: design_tokens.components-page-left-nav
     operation: CREATE
   - resource: design_tokens.components-picture
     operation: CREATE
@@ -88,8 +97,7 @@ output:
     operation: CREATE
   - resource: design_tokens.components-label
     operation: CREATE
-  - resource: design_tokens.global-color-light
-    operation: CREATE
+
 
 tools:
   required: [write_file, load_skill, ui_getPageScreenshot, platform_createWebPage, find_files_by_glob, platform_getSessionResource, platform_listPages]
