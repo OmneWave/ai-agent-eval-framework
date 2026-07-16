@@ -14,6 +14,12 @@ DELEGATION_TOOL_NAMES = frozenset(
     }
 )
 FILE_WRITE_TOOLS = frozenset({"write_file", "edit_file_content", "delete_file"})
+VARIABLE_CREATE_TOOLS = frozenset({"ui_createApiAwareVariable", "ui_createNonApiAwareVariable", "ui_updateVariable"})
+"""Platform tools that create/update a page's variable definition directly --
+confirmed (via a real trace, not the earlier speculative stand-in) to sometimes
+carry NO accompanying write_file/edit_file_content call on the underlying
+`.variables.json` at all. See ``file_changes``'s handling of these tools below,
+and docs/CONTRACT_SPEC.md's former "known limitation" note (now resolved)."""
 SKILL_TOOL = "load_skill"
 EXECUTE_TOOL_WRAPPER = "execute_tool"
 """wm-agent-server's generic dispatcher tool (`execute_tool(tool_name, tool_args)`,
@@ -203,6 +209,17 @@ class TraceSnapshot(BaseModel):
                 changes.append(
                     FileChangeRecord(path=path, operation=operation, tool_name=base_name)
                 )
+        for span in self.spans:
+            if span.type != "TOOL":
+                continue
+            base_name = _span_base_name(span.name)
+            if base_name not in VARIABLE_CREATE_TOOLS:
+                continue
+            path = _variable_change_path(span.input or {})
+            if path is None:
+                continue
+            operation = "edit" if base_name == "ui_updateVariable" else "write"
+            changes.append(FileChangeRecord(path=path, operation=operation, tool_name=base_name))
         return changes
 
     @property
@@ -253,6 +270,17 @@ _TOOL_PATH_FIELDS: dict[str, tuple[str, ...]] = {
 
 
 def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None = None) -> list[str]:
+    if tool_name in VARIABLE_CREATE_TOOLS:
+        # These calls often carry only `pageName` (no path/file_path key at all --
+        # confirmed via a real trace), which neither _TOOL_PATH_FIELDS nor the
+        # generic fallback below know how to read. Route through the same
+        # path-resolution `file_changes` uses, so every consumer of this
+        # function (input_context's/output's evidencing-span lookups included)
+        # agrees on what path a variable-creation call touched.
+        variable_path = _variable_change_path(tool_input)
+        if variable_path:
+            return [variable_path]
+
     fields = _TOOL_PATH_FIELDS.get(tool_name) if tool_name else None
     if fields:
         paths: list[str] = []
@@ -291,6 +319,20 @@ def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None =
         if match:
             paths.append(match.group(1))
     return paths
+
+
+def _variable_change_path(tool_input: dict[str, Any]) -> str | None:
+    """The ``.variables.json`` path a ``VARIABLE_CREATE_TOOLS`` call targets --
+    field shape isn't consistent across observed calls: a real trace carries
+    ``pageName`` directly (convention-derive the path from it), while this
+    repo's own fixture instead carries a ``path``/``file_path`` pointing at the
+    file already. Accept either rather than betting on one.
+    """
+    page = tool_input.get("pageName")
+    if page:
+        return f"src/main/webapp/pages/{page}/{page}.variables.json"
+    path = tool_input.get("path") or tool_input.get("file_path")
+    return str(path) if path else None
 
 
 def _paths_match(pattern: str, path: str) -> bool:

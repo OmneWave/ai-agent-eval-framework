@@ -173,6 +173,28 @@ uv run run-verify \
 uv run run-verify --list-plugins
 ```
 
+### Bootstrapping a contract from a trace
+
+`generate-contract` reverse-engineers a starter contract YAML from one observed trace — either
+fetched live or from a previously saved `TraceSnapshot` JSON (e.g. via `fetch-trace --out`):
+
+```bash
+uv run generate-contract --trace-id c4739a2868e2b7aca6430aeae2f7ea0a \
+  --workflow screenshot_to_code --out contracts/new_workflow.yaml
+
+# or from a saved snapshot file
+uv run generate-contract --from-file trace_snapshot.json \
+  --workflow screenshot_to_code --out contracts/new_workflow.yaml
+```
+
+It infers `resources`/`output`/`input_context` from the trace's actual file writes/edits and
+`read_files` calls, `skills.required` from `skill_loads`, and `tools.required` from every tool
+the trace called. **This is a starting point, not a finished contract** — it only knows what one
+trace happened to do, so there's no required-vs-optional judgement on `skills`/`tools`, and every
+`output` entry is checked structurally (path + operation), never for business-logic correctness.
+Any path it can't map to a known resource-path convention is printed as a warning instead of
+guessed at — review those, and the `match` clauses it filled in, before trusting the result.
+
 ## Contract schema
 
 Full field-by-field reference, possible values, and rationale: [docs/CONTRACT_SPEC.md](docs/CONTRACT_SPEC.md). Summary below.

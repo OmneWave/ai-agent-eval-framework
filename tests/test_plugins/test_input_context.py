@@ -114,6 +114,26 @@ def test_input_context_flags_deviation_and_fails(snapshot, contract):
 
 
 def test_input_context_finds_term_in_tool_output_only(snapshot, contract):
+    # The term must show up via a *read*-tool call's output -- a write tool
+    # (e.g. edit_file_content) carrying it wouldn't count, since `terms` is
+    # scoped to INPUT_GATHERING_TOOLS.
+    for span in snapshot.spans:
+        if span.id == "span-read-files":
+            span.input = {"paths": span.input["paths"]}
+            span.output = {"result": "resolved operationId petstore_findPetsByTags"}
+        if span.id in ("span-create-var", "span-variable-write"):
+            span.input = {k: v for k, v in span.input.items() if k != "operationId"}
+    result = InputContextPlugin().evaluate(snapshot, contract)
+    assert result.passed
+    entry = result.evidence["entries"][_RESOURCE]
+    assert "petstore_findPetsByTags" in entry["found_terms"]
+    assert entry["term_locations"]["petstore_findPetsByTags"] == "output only"
+
+
+def test_input_context_ignores_term_in_write_tool_call(snapshot, contract):
+    # A term appearing only in a write-tool call's input/output must NOT
+    # ground the term -- `terms` under input_context is scoped to read tools
+    # only; write-tool evidence belongs to `match`/output.py instead.
     for span in snapshot.spans:
         if span.id == "span-read-files":
             span.input = {"paths": span.input["paths"]}
@@ -122,10 +142,9 @@ def test_input_context_finds_term_in_tool_output_only(snapshot, contract):
         if span.id == "span-variable-write":
             span.output = {"result": "resolved operationId petstore_findPetsByTags"}
     result = InputContextPlugin().evaluate(snapshot, contract)
-    assert result.passed
+    assert not result.passed
     entry = result.evidence["entries"][_RESOURCE]
-    assert "petstore_findPetsByTags" in entry["found_terms"]
-    assert entry["term_locations"]["petstore_findPetsByTags"] == "output only"
+    assert "petstore_findPetsByTags" in entry["missing_terms"]
 
 
 def test_input_context_flags_unrelated_file_read(snapshot, contract):
