@@ -187,16 +187,21 @@ Every entry means: **this resource must be read somewhere in the trace.**
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `resource` | `string` | yes | Dotted reference, resolved via `resources` (see above). |
-| `terms` | `[string]` | no, default `[]` | Free-form ids/keywords that must appear in **some** tool call's input or output, anywhere in the trace. Combined with any qualifier terms parsed from `resource`. |
+| `terms` | `[string]` | no, default `[]` | Free-form ids/keywords that must appear in **some** *read*-tool call's input or output, anywhere in the trace. Combined with any qualifier terms parsed from `resource`. |
 
 Checked by the `input_context` plugin:
 - Was the resolved path actually retrieved (via `read_files`)?
-- Were all `terms` + qualifier terms observed (in a tool call's input **or** output — either
-  side counts)?
+- Were all `terms` + qualifier terms observed in a **read**-tool call's input **or** output —
+  either side counts, but only among read tools (`INPUT_GATHERING_TOOLS`: `read_files`,
+  `grep_in_files`, `find_files_by_glob`, `get_tool_schema`, and the `platform_get*`/`platform_list*`
+  lookup tools). A word appearing only in an unrelated *write* call never grounds a term — that's
+  `match`'s job (see [output](#output)), checked separately against write-tool calls.
 - (Inverse direction, contract-wide) Were any files read via `read_files` that aren't
   declared anywhere under `input_context`/`output`, and aren't in `knowledge`? (scope creep)
 - (Contract-wide) Were all qualifier terms parsed from **`output[]`** references also
-  observed somewhere? (since `output` has no content-check of its own)
+  observed somewhere in the trace? (since `output` has no content-check of its own; this one
+  stays trace-wide rather than read-tool-scoped, since an output qualifier like an `operationId`
+  typically surfaces in the write/creation call itself, not a read call)
 
 Under the strict scoring rule, **every** one of the above must hold for
 `input_context.passed = True` — a missing term, a missing path, or one unrelated read all
@@ -221,32 +226,46 @@ Every entry means: **this resource must be created/updated/deleted.**
 | `operation` | `string` | yes | `CREATE`, `UPDATE`, `DELETE` | The expected file operation. Checked against the trace's actual `FileChangeRecord.operation` — `CREATE`/`UPDATE` accept an observed `write` or `edit`; `DELETE` requires an observed `delete`. Mismatch → `output_operation_mismatch`. |
 | `match` | `dict` or `list` | no, default `{}` | any field:value pairs, or any list of values | Evidence assertion against the *same* tool call whose input also matched this entry's resolved path (an "evidencing call") — see below. Mismatch → `output_match_mismatch`. |
 
-### `match` — exact evidence assertion (not substring)
+### `match` — a scoped evidence assertion (unlike `terms`, tied to one specific call)
 
-**`match` is always an EXACT match, never substring** — this is the one thing to not confuse it
-for. `terms` (see [input_context](#input_context)) is a *substring* search, *anywhere in the whole
-trace*; `match` is an *exact* comparison, scoped to *one specific call*. Two shapes:
+`match` and `terms` (see [input_context](#input_context)) differ in **which calls they inspect**,
+mirroring the two plugins' own responsibilities: `terms` verifies what got *read* (scoped to
+read-tool calls, input and output — see above); `match` verifies what got *written* (scoped to
+write-tool calls, input only — `OUTPUT_GENERATION_TOOLS`: `write_file`, `edit_file_content`,
+`delete_file`, `ui_createApiAwareVariable`, `ui_createNonApiAwareVariable`, `ui_updateVariable`,
+`platform_createWebPage`, `platform_compile`). Within that write-tool scope, `match` is further
+narrowed to the *one call* that also matched this entry's resolved path (the "evidencing call" —
+see the coherence rule below). Two shapes, with different matching semantics because they fit
+different tool-argument shapes:
 
-- **dict form** — `{field: value, ...}`: every key must exist literally in the evidencing call's
-  structured input, and its value must equal the given value exactly (case-insensitive). Use when
-  the field name is known, e.g.:
+- **dict form** — `{field: value, ...}`: **exact match**. Every key must exist literally in the
+  evidencing call's structured *input*, and its value must equal the given value exactly
+  (case-insensitive). For tools with flat, short scalar arguments where the field name is known
+  (e.g. `ui_createApiAwareVariable`'s `operationId`):
   ```yaml
   match:
     operationId: petstore_findPetsByTags
   ```
-- **list form** — `[value, ...]`: every value must equal exactly *some* field's value in that same
-  call's input, whichever key holds it. Use when the expected value is known but the field name
-  isn't (or shouldn't be hardcoded, e.g. it may differ across tool versions), e.g.:
+- **list form** — `[value, ...]`: **substring match**. Every value must appear as a substring of
+  some value in that same call's input (case-insensitive). Use this shape when the expected value
+  is known but the field name isn't (e.g. it may differ across tool versions), or when the value
+  lives inside a larger content blob rather than being a field's entire value — e.g. a widget tag
+  inside `write_file`'s `file_content` (a short keyword can never *equal* a whole file's content,
+  only appear within it):
   ```yaml
   match: [petstore_findPetsByTags]
+  # or, checking markup content written by write_file:
+  match: [wm-button]
   ```
 
-**Coherence rule**: everything in `match` must be satisfied on the *same* call that also matched
-the resolved `resource` path — never split across two different calls. This is found by first
-narrowing the trace to "evidencing spans" (`TOOL` spans whose extracted input paths match the
-resolved path), then checking `match` only against those spans' own input. A call that only
-matches the path but not every `match` condition, or a *different* call elsewhere in the trace
-that happens to carry one of the `match` values but never touched this resource, never counts.
+**Coherence rule**: everything in `match` must be satisfied on the *same* write-tool call that also
+matched the resolved `resource` path — never split across two different calls, and never satisfied
+by a read call even if it carries the same value. This is found by first narrowing the trace to
+"evidencing spans" (`TOOL` spans whose base name is in `OUTPUT_GENERATION_TOOLS` **and** whose
+extracted input paths match the resolved path), then checking `match` only against those spans'
+own input. A call that only matches the path but not every `match` condition, or a *different*
+call elsewhere in the trace that happens to carry one of the `match` values but never touched this
+resource, never counts.
 
 **Still permissive across *which* call**: if multiple evidencing calls exist (e.g. a retry after
 an earlier mistake), only one of them needs to satisfy `match` (`any()` match, same "first match
@@ -264,16 +283,19 @@ creep" and "nothing protected got touched." There is no separate `protected:` li
 resource that's only ever referenced under `input_context` (never `output`) is automatically
 protected, because any change to it is caught by this same check.
 
-**Known limitation — platform-created resources.** `FileChangeRecord` extraction
-(`TraceSnapshot.file_changes`) only recognizes `write_file`/`edit_file_content`/`delete_file`
-calls as write evidence. When a resource is actually created via a platform/MCP tool (e.g.
-`ui_createApiAwareVariable`) rather than a direct file-editing tool, there's no confirmed
-evidence of what — if anything — shows up as matching write evidence in a real trace. Traces
-used in this repo's tests model this with a plausible but unverified stand-in (a separate
-`edit_file_content` span alongside the platform tool call). Treat `output` operation checks
-on platform-created resources as unverified against real traffic until a real trace sample
-confirms what evidence actually appears; extending `FILE_WRITE_TOOLS` or teaching `output` to
-accept a platform tool call itself as write evidence are both options once that's confirmed.
+**Resolved — platform-created resources.** `FileChangeRecord` extraction
+(`TraceSnapshot.file_changes`) used to only recognize `write_file`/`edit_file_content`/
+`delete_file` calls as write evidence, leaving variable creation via a platform tool (e.g.
+`ui_createApiAwareVariable`/`ui_createNonApiAwareVariable`/`ui_updateVariable`) with no evidence
+at all whenever it wasn't also accompanied by a direct file-editing call. A real trace (not this
+repo's earlier synthetic stand-in) confirmed exactly that: a variable created purely via
+`ui_createNonApiAwareVariable`, no `.variables.json` write/edit anywhere in the trace.
+`file_changes` now also synthesizes a `write`/`edit` `FileChangeRecord` for `VARIABLE_CREATE_TOOLS`
+calls (path derived from `pageName`, or from a `path`/`file_path` field when `pageName` isn't
+present — both shapes are observed across real vs. fixture traces), and `extract_paths_from_input`
+resolves the same path for these tools, so `output`'s `match`-evidence lookup (which filters
+evidencing spans by extracted path) agrees with the operation check on what a variable-creation
+call touched.
 
 ---
 

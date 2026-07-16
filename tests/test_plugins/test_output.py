@@ -30,10 +30,15 @@ def test_output_reports_output_generation_time_without_affecting_score(snapshot,
 
 
 def test_output_flags_operation_mismatch(snapshot, contract):
-    # DELETE observed where CREATE was declared for the variable.
+    # DELETE observed where CREATE was declared for the variable. Also strip
+    # every ui_create*/updateVariable call's path so none of them independently
+    # synthesize a CREATE/UPDATE FileChangeRecord (see file_changes) that would
+    # otherwise still satisfy the entry despite the file-level delete below.
     for span in snapshot.spans:
         if span.id == "span-variable-write":
             span.name = "delete_file"
+        elif span.id in ("span-create-var", "span-update-var", "span-create-nonapi-var"):
+            span.input = {k: v for k, v in span.input.items() if k not in ("path", "pageName", "file_path")}
 
     result = OutputPlugin().evaluate(snapshot, contract)
 
@@ -123,6 +128,39 @@ def test_output_match_list_form_matches_value_under_any_field(snapshot, contract
     assert result.violations == []
 
 
+def test_output_match_ignores_read_tool_evidence(snapshot, contract):
+    # A read_files call at the same path carrying the match value must NOT
+    # satisfy `match` -- evidencing spans are restricted to write tools
+    # (OUTPUT_GENERATION_TOOLS); a read is not evidence of what got written.
+    for span in snapshot.spans:
+        if span.id in ("span-create-var", "span-variable-write"):
+            span.input = {k: v for k, v in span.input.items() if k != "operationId"}
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-read-variable-file",
+            name="read_files",
+            type="TOOL",
+            parent_id="span-deleg-ui",
+            agent_id="wm_ui_expert",
+            timestamp="2026-01-01T10:00:10Z",
+            end_time=None,
+            level="DEFAULT",
+            input={
+                "paths": ["src/main/webapp/pages/PetTable/PetTable.variables.json"],
+                "operationId": "petstore_findPetsByTags",
+            },
+            output=None,
+            success=True,
+        )
+    )
+    policy_contract = _nameless_variable_contract(contract, {"operationId": "petstore_findPetsByTags"})
+    result = OutputPlugin().evaluate(snapshot, policy_contract)
+
+    assert not result.passed
+    codes = [v.code for v in result.violations]
+    assert "output_match_mismatch" in codes
+
+
 def test_match_satisfied_dict_and_list_shapes():
     span_input = {"operationId": "petstore_findPetsByTags", "service": "petstore"}
 
@@ -134,6 +172,12 @@ def test_match_satisfied_dict_and_list_shapes():
     # list shape -- value under any field, case-insensitive
     assert _match_satisfied(["PETSTORE_FINDPETSBYTAGS"], span_input) is True
     assert _match_satisfied(["not_present_anywhere"], span_input) is False
+
+    # list shape -- substring within a larger field value, e.g. a widget tag
+    # buried inside write_file's file_content (not the field's *entire* value)
+    content_input = {"file_path": "LoginPage.html", "file_content": "<div><wm-button name='b1'/></div>"}
+    assert _match_satisfied(["button"], content_input) is True
+    assert _match_satisfied(["textbox"], content_input) is False
 
     # empty -- no constraint
     assert _match_satisfied({}, span_input) is True

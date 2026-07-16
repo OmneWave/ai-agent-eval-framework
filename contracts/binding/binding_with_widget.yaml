@@ -5,6 +5,11 @@ skills:
   required: [ ui_to_api_binding_workflow, explore-codebase, explore-api,variables, actions, markup, javascript]
   optional: []
 
+tools:
+  required: [ find_files_by_glob, read_files, get_tool_schema, write_file, ui_updateVariable, platform_listPageVariables, platform_getServiceDetails, ui_createApiAwareVariable, ui_createNonApiAwareVariable, grep_in_files, execute_tool ]
+  optional: [ edit_file_content ]
+  forbidden: [ delete_file ]
+
 knowledge:
   - /catalog/actions/NotificationAction/NotificationAction.md
   - /catalog/components/wm-table/wm-table.md
@@ -44,8 +49,3 @@ output:
     operation: UPDATE
   - resource: page.PetTable.javascript.PetTable
     operation: UPDATE
-
-tools:
-  required: [find_files_by_glob, read_files, get_tool_schema, write_file, ui_updateVariable, platform_listPageVariables, platform_getServiceDetails, ui_createApiAwareVariable, ui_createNonApiAwareVariable, grep_in_files, execute_tool]
-  optional: [edit_file_content]
-  forbidden: [delete_file]

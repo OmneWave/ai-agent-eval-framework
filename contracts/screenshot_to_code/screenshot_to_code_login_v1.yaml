@@ -1,6 +1,5 @@
 workflow: screenshot_to_code
 contract_version: "1.0.0"
-
 skills:
   required:
     - components-list
@@ -68,6 +67,7 @@ input_context: []
 output:
   - resource: page.LoginPage
     operation: CREATE
+    match: ['anchor', 'form']
   - resource: design_tokens.tokens-plan
     operation: CREATE
   - resource: design_tokens.layout-plan
