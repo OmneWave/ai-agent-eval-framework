@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from wm_agents_validator.cli.langfuse_config import add_langfuse_args, get_langfuse_environment, init_langfuse_env
+from wm_agents_validator.cli.trace_args import parse_metadata_filters
 from wm_agents_validator.comparison.aggregator import merge_reports
 from wm_agents_validator.comparison.pipeline import ComparisonPipeline
 from wm_agents_validator.comparison.sources import (
@@ -147,23 +148,6 @@ def _split_contract_arg(value: str) -> tuple[str, list[str]]:
     return path.strip(), ids
 
 
-def _parse_metadata_filters(values: list[str]) -> list[tuple[str, str]]:
-    """Parses repeated `--filter key=value` values into (key, value) pairs.
-
-    Raises ValueError naming the bad value if any occurrence has no `=`.
-    """
-    pairs: list[tuple[str, str]] = []
-    for value in values:
-        if "=" not in value:
-            raise ValueError(f"--filter value {value!r} must be in key=value form")
-        key, val = value.split("=", 1)
-        key, val = key.strip(), val.strip()
-        if not key or not val:
-            raise ValueError(f"--filter value {value!r} must be in key=value form")
-        pairs.append((key, val))
-    return pairs
-
-
 def _resolve_contract_trace_groups(
     contracts: list[str], trace_id_groups: list[str]
 ) -> list[tuple[str, list[str]]]:
@@ -254,7 +238,7 @@ def main() -> None:
         ]
     elif has_filter:
         try:
-            metadata_filters = _parse_metadata_filters(args.filter)
+            metadata_filters = parse_metadata_filters(args.filter)
         except ValueError as exc:
             parser.error(str(exc))
         source = MetadataFilterTraceSource(metadata_filters, limit=args.limit, environment=environment)
