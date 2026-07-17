@@ -94,11 +94,38 @@ class TimeRangeTraceSource:
         )
 
 
+def _build_metadata_filter_conditions(metadata_filters: list[tuple[str, str]]) -> list[dict]:
+    """Groups (key, value) pairs by key, then builds one Langfuse filter
+    condition per key -- DIFFERENT keys still AND (e.g. projectid=X AND
+    environment=stage-ai), but the SAME key repeated (e.g. two
+    `--filter projectid=` occurrences) becomes an OR across those values,
+    not an impossible AND. A single value per key keeps using the exact-match
+    `stringObject`/`"="` condition (unchanged from before); a key with more
+    than one value switches to `categoryOptions`/`"any of"` -- confirmed via
+    the langfuse SDK's own `trace.list()` filter-JSON docstring as the
+    supported way to OR multiple values for one nested metadata key (the
+    plain `stringObject` type only offers `=`/`contains`/etc., no "any of").
+    """
+    values_by_key: dict[str, list[str]] = {}
+    for key, value in metadata_filters:
+        values_by_key.setdefault(key, []).append(value)
+    conditions: list[dict] = []
+    for key, values in values_by_key.items():
+        if len(values) == 1:
+            conditions.append({"type": "stringObject", "column": "metadata", "key": key, "operator": "=", "value": values[0]})
+        else:
+            conditions.append(
+                {"type": "categoryOptions", "column": "metadata", "key": key, "operator": "any of", "value": values}
+            )
+    return conditions
+
+
 class MetadataFilterTraceSource:
     """Discovers up to `limit` trace IDs whose metadata matches all given
-    key=value conditions (ANDed), applied server-side via Langfuse's filter
-    JSON -- see `search_trace_ids_by_metadata`. Standalone -- no time range
-    needed.
+    key=value conditions, applied server-side via Langfuse's filter JSON --
+    see `search_trace_ids_by_metadata` and `_build_metadata_filter_conditions`
+    for how repeated keys OR instead of ANDing into an impossible condition.
+    Standalone -- no time range needed.
     """
 
     def __init__(
@@ -110,10 +137,7 @@ class MetadataFilterTraceSource:
     ) -> None:
         if not metadata_filters:
             raise ValueError("metadata_filters must be a non-empty list")
-        self._filters = [
-            {"type": "stringObject", "column": "metadata", "key": key, "operator": "=", "value": value}
-            for key, value in metadata_filters
-        ]
+        self._filters = _build_metadata_filter_conditions(metadata_filters)
         self._limit = limit
         self._environment = environment
 

@@ -66,6 +66,27 @@ def test_metadata_filter_trace_source_delegates_to_fetcher():
     mock_search.assert_called_once_with(expected_filters, limit=20, environment="stage-ai")
 
 
+def test_metadata_filter_trace_source_ors_repeated_key_instead_of_anding():
+    # Two --filter projectid=X occurrences must OR across those values --
+    # ANDing them (the old behavior) can never match, since one trace's
+    # metadata.projectid can only equal one value at a time.
+    with patch(
+        "wm_agents_validator.comparison.sources.search_trace_ids_by_metadata",
+        return_value=["t1"],
+    ) as mock_search:
+        source = MetadataFilterTraceSource(
+            [("projectid", "WMPRJ1"), ("projectid", "WMPRJ2"), ("environment", "stage-ai")],
+            limit=1,
+        )
+        source.get_trace_ids()
+
+    expected_filters = [
+        {"type": "categoryOptions", "column": "metadata", "key": "projectid", "operator": "any of", "value": ["WMPRJ1", "WMPRJ2"]},
+        {"type": "stringObject", "column": "metadata", "key": "environment", "operator": "=", "value": "stage-ai"},
+    ]
+    mock_search.assert_called_once_with(expected_filters, limit=1, environment=None)
+
+
 def test_metadata_filter_trace_source_rejects_empty_list():
     with pytest.raises(ValueError):
         MetadataFilterTraceSource([])

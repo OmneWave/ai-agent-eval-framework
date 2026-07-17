@@ -43,8 +43,10 @@ def main() -> None:
         action="append",
         metavar="KEY=VALUE",
         help="Metadata key=value to find a trace by (server-side, exact match). Repeatable -- "
-        "each occurrence ANDs another condition, e.g. --filter projectid=WMPRJ... "
-        "--filter environment=stage-ai. Generates from the single most recent match.",
+        "a DIFFERENT key ANDs another condition, e.g. --filter projectid=WMPRJ... "
+        "--filter environment=stage-ai. The SAME key repeated ORs across those values instead, "
+        "e.g. --filter projectid=WMPRJ1 --filter projectid=WMPRJ2 matches either project. "
+        "Generates from the single most recent match.",
     )
     filter_group.add_argument(
         "--limit",
