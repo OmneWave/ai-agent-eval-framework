@@ -42,6 +42,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "  uv run compare-traces --contract contracts/foo.yaml "
             "--filter workflow_name=create_variable_binding --filter model_name=glm-5 "
             "--limit 20 --out report.html\n\n"
+            "  # Different contract PER project -- embed a key=value filter directly\n"
+            "  # in --contract instead of a trace id, so each project pulls its own\n"
+            "  # matching trace and is verified against its own page's contract\n"
+            "  uv run compare-traces \\\n"
+            "    --contract contracts/pages/login.yaml:projectid=WMPRJ1 \\\n"
+            "    --contract contracts/pages/dashboard.yaml:projectid=WMPRJ2 \\\n"
+            "    --out report.html\n\n"
             "  # Content search: no --trace-ids/--from-to/--filter at all -- keeps searching\n"
             "  # the most recent traces until --limit actually match (single contract only)\n"
             "  uv run compare-traces --contract contracts/foo.yaml "
@@ -54,12 +61,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--contract",
         action="append",
         required=True,
-        metavar="CONTRACT_PATH[:TRACE_ID[,TRACE_ID...]]",
+        metavar="CONTRACT_PATH[:TRACE_ID[,TRACE_ID...]|:KEY=VALUE[,KEY=VALUE...]]",
         help="Path to a WorkflowContract YAML. To compare multiple contracts, repeat "
         "this flag with each trace's ids embedded directly, e.g. "
         "'path/to.yaml:id1,id2' -- this keeps each contract self-contained instead of "
-        "relying on a separate --trace-ids list lining up by position. A single bare "
-        "path (no ':') works with --trace-ids or --from/--to as before.",
+        "relying on a separate --trace-ids list lining up by position. Or embed a "
+        "key=value metadata filter instead of ids, e.g. 'path/to.yaml:projectid=WMPRJ1', "
+        "so each contract pulls its own matching trace by metadata -- lets a batch of "
+        "different contracts each run against a different project/page in one command. "
+        "A single bare path (no ':') works with --trace-ids, --from/--to, or --filter as before.",
     )
 
     source_group = parser.add_argument_group(
@@ -80,9 +90,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="KEY=VALUE",
         help="Metadata key=value to filter traces by (server-side, exact match). Repeatable -- "
-        "each occurrence ANDs another condition, e.g. --filter workflow_name=foo "
-        "--filter model_name=glm-5. Works standalone, no --from/--to needed. Single "
-        "contract only, like time-range mode.",
+        "a DIFFERENT key ANDs another condition, e.g. --filter workflow_name=foo "
+        "--filter model_name=glm-5. The SAME key repeated ORs across those values instead, "
+        "e.g. --filter projectid=WMPRJ1 --filter projectid=WMPRJ2 matches either project. "
+        "Works standalone, no --from/--to needed. Single contract only, like time-range mode.",
     )
     source_group.add_argument(
         "--user-id",
@@ -132,20 +143,38 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _split_contract_arg(value: str) -> tuple[str, list[str]]:
-    """Splits one `--contract` value into (path, embedded_trace_ids).
+def _split_contract_arg(value: str) -> tuple[str, list[str], list[tuple[str, str]]]:
+    """Splits one `--contract` value into (path, embedded_trace_ids, embedded_metadata_filters).
 
-    `path/to.yaml:id1,id2` attaches trace ids directly to that contract, so
-    the (contract, trace ids) association is explicit and self-contained
-    right there in a single flag, instead of depending on a same-order
-    `--trace-ids` occurrence elsewhere on the command line. A bare path (no
-    `:`) has no embedded ids and falls back to `--trace-ids`/`--from`-`--to`.
+    `path/to.yaml:id1,id2` attaches trace ids directly to that contract, so the
+    (contract, trace ids) association is explicit and self-contained right
+    there in a single flag, instead of depending on a same-order `--trace-ids`
+    occurrence elsewhere on the command line.
+
+    `path/to.yaml:key=value` (or `key=value,key2=value2`) instead attaches a
+    metadata filter -- so a batch of contracts can each pull *their own*
+    matching trace by e.g. `projectid`, rather than all of them sharing one
+    trace-id list or one global `--filter`. Detected by the presence of `=`
+    in the embedded segment; mixing ids and filters after the same `:` isn't
+    supported (raises ValueError naming the bad value).
+
+    A bare path (no `:`) has neither and falls back to `--trace-ids`/
+    `--from`-`--to`/`--filter`.
     """
     if ":" not in value:
-        return value, []
-    path, ids_part = value.split(":", 1)
-    ids = [t.strip() for t in ids_part.split(",") if t.strip()]
-    return path.strip(), ids
+        return value, [], []
+    path, rest_part = value.split(":", 1)
+    path = path.strip()
+    segments = [s.strip() for s in rest_part.split(",") if s.strip()]
+    has_eq = [("=" in s) for s in segments]
+    if any(has_eq) and not all(has_eq):
+        raise ValueError(
+            f"--contract {value!r}: can't mix trace ids and key=value filters after ':' -- "
+            "use all ids (path:id1,id2) or all key=value filters (path:key=value,key2=value2)"
+        )
+    if segments and all(has_eq):
+        return path, [], parse_metadata_filters(segments)
+    return path, segments, []
 
 
 def _resolve_contract_trace_groups(
@@ -166,10 +195,10 @@ def _resolve_contract_trace_groups(
     pooled_trace_ids = [t.strip() for group in trace_id_groups for t in group.split(",") if t.strip()]
 
     if len(parsed) == 1:
-        path, embedded_ids = parsed[0]
+        path, embedded_ids, _filters = parsed[0]
         return [(path, embedded_ids + pooled_trace_ids)]
 
-    missing_embedded = [path for path, ids in parsed if not ids]
+    missing_embedded = [path for path, ids, _filters in parsed if not ids]
     if missing_embedded or pooled_trace_ids:
         raise ValueError(
             "When passing multiple --contract values, each one must embed its own "
@@ -177,28 +206,58 @@ def _resolve_contract_trace_groups(
             "--contract path/to/other.yaml:id3,id4 -- --trace-ids isn't supported "
             "alongside multiple --contract values."
         )
-    return [(path, ids) for path, ids in parsed]
+    return [(path, ids) for path, ids, _filters in parsed]
+
+
+def _resolve_contract_filter_groups(contracts: list[str]) -> list[tuple[str, list[tuple[str, str]]]]:
+    """Builds (contract_path, metadata_filter_pairs) groups from `--contract`
+    values with embedded `path:key=value[,key2=value2]` filters -- lets each
+    contract in a batch pull its own matching trace(s) by e.g. `projectid`,
+    instead of all contracts sharing one global `--filter`.
+
+    Every `--contract` value must embed its own filter, same self-contained-
+    association principle as embedded trace ids above: no silent pairing by
+    position, no accidental sharing of one filter across contracts that were
+    each meant to pull a different trace.
+    """
+    parsed = [_split_contract_arg(c) for c in contracts]
+    missing_embedded = [path for path, _ids, filters in parsed if not filters]
+    if missing_embedded:
+        raise ValueError(
+            "Every --contract value must embed its own key=value filter when using this mode, "
+            "e.g. --contract path/to.yaml:projectid=WMPRJ1 --contract path/to/other.yaml:projectid=WMPRJ2 "
+            f"-- missing an embedded filter on: {missing_embedded}"
+        )
+    return [(path, filters) for path, _ids, filters in parsed]
 
 
 def main() -> None:
     parser = _build_arg_parser()
     args = parser.parse_args()
 
-    has_embedded_ids = any(":" in c for c in args.contract)
+    try:
+        contract_specs = [_split_contract_arg(c) for c in args.contract]
+    except ValueError as exc:
+        parser.error(str(exc))
+        return
+    has_embedded_ids = any(ids for _path, ids, _filters in contract_specs)
+    has_embedded_filters = any(filters for _path, _ids, filters in contract_specs)
     has_explicit_ids = bool(args.trace_ids) or has_embedded_ids
     has_time_range = bool(args.from_ts or args.to_ts)
     has_filter = bool(args.filter)
     has_content_filter = bool(args.user_prompt_contains or args.skill_name_contains)
-    explicit_modes = sum([has_explicit_ids, has_time_range, has_filter])
+    explicit_modes = sum([has_explicit_ids, has_time_range, has_filter, has_embedded_filters])
     if explicit_modes > 1:
         parser.error(
             "Provide exactly one of --trace-ids / ids embedded in --contract, OR "
-            "--from/--to, OR --filter"
+            "--from/--to, OR --filter, OR key=value filters embedded in --contract "
+            "(and don't mix embedded ids with embedded filters across --contract values)"
         )
     if explicit_modes == 0 and not has_content_filter:
         parser.error(
             "Provide exactly one of --trace-ids / ids embedded in --contract, OR "
-            "--from/--to, OR --filter, OR --user-prompt-contains/--skill-name-contains "
+            "--from/--to, OR --filter, OR key=value filters embedded in --contract, OR "
+            "--user-prompt-contains/--skill-name-contains "
             "(content search mode -- searches the most recent traces until --limit matches)"
         )
     # No explicit mode, but a content filter alone -> search mode: keep pulling
@@ -215,7 +274,25 @@ def main() -> None:
     init_langfuse_env(args)
     environment = get_langfuse_environment()
 
-    if has_explicit_ids:
+    if has_embedded_filters:
+        try:
+            filter_groups = _resolve_contract_filter_groups(args.contract)
+        except ValueError as exc:
+            parser.error(str(exc))
+        pipelines = [
+            ComparisonPipeline(
+                contract=load_contract(contract_path),
+                source=MetadataFilterTraceSource(filters, limit=args.limit, environment=environment),
+                user_id_key=args.user_id_key,
+                model_filter=args.model,
+                user_prompt_filter=args.user_prompt_contains,
+                skill_name_filter=args.skill_name_contains,
+                retries=args.retries,
+                delay_sec=args.delay,
+            )
+            for contract_path, filters in filter_groups
+        ]
+    elif has_explicit_ids:
         try:
             groups = _resolve_contract_trace_groups(args.contract, args.trace_ids or [])
         except ValueError as exc:

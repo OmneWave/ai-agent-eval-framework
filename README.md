@@ -349,7 +349,8 @@ uv run compare-traces \
 
 **4. A metadata filter** (single contract only, no time range needed) — matches traces whose
 `metadata` has an exact key=value match, server-side via Langfuse's own filter query (not a
-client-side scan). Repeat `--filter` to AND multiple conditions:
+client-side scan). Repeat `--filter` with a *different* key to AND another condition; repeat it
+with the *same* key to OR across multiple values instead (e.g. match either of two project ids):
 
 ```bash
 uv run compare-traces \
@@ -357,7 +358,33 @@ uv run compare-traces \
   --filter workflow_name=create_variable_binding --filter model_name=glm-5 \
   --limit 20 \
   --out comparison.html
+
+# same key repeated -> OR, not AND (matches traces from either project)
+uv run compare-traces \
+  --contract contracts/binding/binding_with_widget.yaml \
+  --filter projectid=WMPRJ1 --filter projectid=WMPRJ2 \
+  --limit 20 \
+  --out comparison.html
 ```
+
+**5. A different contract per project/page** — embed a `key=value` metadata filter directly in
+`--contract` (instead of trace ids) so each contract pulls its *own* matching trace. This is what
+you want for a batch like "one page per project, each needing its own contract" — no separate
+`--filter` (that's single-contract only) and no risk of one filter's traces silently pairing with
+the wrong contract:
+
+```bash
+uv run compare-traces \
+  --contract contracts/pages/login.yaml:projectid=WMPRJ2c9180869f6d4c60019f6f385a9000bb \
+  --contract contracts/pages/dashboard.yaml:projectid=WMPRJ2c9180869f6d4c60019f6f33675b00b8 \
+  --contract contracts/pages/register_company.yaml:projectid=WMPRJ2c9180869f6d4c60019f6f3de63800bf \
+  --out comparison.html
+```
+
+Every `--contract` value must embed its own filter in this mode (same rule as mode 2's embedded
+trace ids) — mixing a bare/id-embedded contract in with filter-embedded ones is rejected rather
+than silently guessed at. Multiple `key=value` pairs on one contract (`path:k1=v1,k2=v2`) still AND
+together for that contract.
 
 Note: Langfuse's trace-list API has no server-side way to filter by a trace's raw `input`/`output`
 content (confirmed directly against a live instance — `column: "input"` is rejected with
