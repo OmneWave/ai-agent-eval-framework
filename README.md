@@ -182,6 +182,11 @@ fetched live or from a previously saved `TraceSnapshot` JSON (e.g. via `fetch-tr
 uv run generate-contract --trace-id c4739a2868e2b7aca6430aeae2f7ea0a \
   --workflow screenshot_to_code --out contracts/new_workflow.yaml
 
+# or find the trace by metadata instead of knowing its id (defaults to --limit 1 --
+# generates from the single most recent match; same --filter syntax as compare-traces)
+uv run generate-contract --filter projectid=WMPRJ2c9180869f6825f5019f6a6b72af0094 \
+  --workflow screenshot_to_code --out contracts/new_workflow.yaml
+
 # or from a saved snapshot file
 uv run generate-contract --from-file trace_snapshot.json \
   --workflow screenshot_to_code --out contracts/new_workflow.yaml

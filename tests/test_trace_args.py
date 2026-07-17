@@ -1,6 +1,6 @@
 import pytest
 
-from wm_agents_validator.cli.trace_args import resolve_trace_from_args
+from wm_agents_validator.cli.trace_args import parse_metadata_filters, resolve_trace_from_args
 from wm_agents_validator.trace.resolver import resolve_trace_id
 
 
@@ -31,3 +31,26 @@ def _ns(**kwargs):
     from argparse import Namespace
 
     return Namespace(**kwargs)
+
+
+def test_parse_metadata_filters_happy_path():
+    assert parse_metadata_filters(["workflow_name=foo", "model_name=glm-5"]) == [
+        ("workflow_name", "foo"),
+        ("model_name", "glm-5"),
+    ]
+
+
+def test_parse_metadata_filters_strips_whitespace():
+    assert parse_metadata_filters([" workflow_name = foo "]) == [("workflow_name", "foo")]
+
+
+def test_parse_metadata_filters_rejects_missing_equals():
+    with pytest.raises(ValueError):
+        parse_metadata_filters(["workflow_name"])
+
+
+def test_parse_metadata_filters_rejects_empty_key_or_value():
+    with pytest.raises(ValueError):
+        parse_metadata_filters(["=foo"])
+    with pytest.raises(ValueError):
+        parse_metadata_filters(["workflow_name="])

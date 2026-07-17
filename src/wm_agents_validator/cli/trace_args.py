@@ -28,6 +28,26 @@ def add_trace_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def parse_metadata_filters(values: list[str]) -> list[tuple[str, str]]:
+    """Parses repeated `--filter key=value` values into (key, value) pairs.
+
+    Raises ValueError naming the bad value if any occurrence has no `=`.
+    Shared by every CLI that offers a `--filter` metadata-search mode
+    (`compare-traces`, `generate-contract`) so the syntax/error message stays
+    identical across them.
+    """
+    pairs: list[tuple[str, str]] = []
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"--filter value {value!r} must be in key=value form")
+        key, val = value.split("=", 1)
+        key, val = key.strip(), val.strip()
+        if not key or not val:
+            raise ValueError(f"--filter value {value!r} must be in key=value form")
+        pairs.append((key, val))
+    return pairs
+
+
 def resolve_trace_from_args(args: argparse.Namespace) -> str:
     trace_id = (args.trace_id or "").strip()
     thread_id = (args.thread_id or "").strip()
