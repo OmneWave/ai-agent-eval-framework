@@ -1,5 +1,6 @@
 workflow: ui_to_api_binding
 contract_version: "1.0.0"
+name: PetTable
 
 skills:
   required: [ ui_to_api_binding_workflow, explore-codebase, explore-api,variables, actions, markup, javascript]

@@ -161,6 +161,38 @@ def test_render_includes_heatmap_and_contract_data_for_multi_contract_report():
     assert embedded["contract_id"] == "contract-a, contract-b"
 
 
+def test_render_includes_name_filter_and_embeds_contract_name():
+    report = ComparisonReport(
+        contract_id="pages@1.0.0",
+        rows=[
+            ComparisonRow(
+                trace_id="trace-1",
+                contract_name="Accounts_Cards",
+                model_name="claude",
+                overall_score=1.0,
+                passed=True,
+                plugin_scores=[PluginScore(plugin="skills_loaded", passed=True, score=1.0)],
+            ),
+            ComparisonRow(
+                trace_id="trace-2",
+                contract_name="Dashboard",
+                model_name="claude",
+                overall_score=1.0,
+                passed=True,
+                plugin_scores=[PluginScore(plugin="skills_loaded", passed=True, score=1.0)],
+            ),
+        ],
+    )
+
+    html = HtmlComparisonRenderer().render(report)
+
+    assert 'id="name-filter"' in html
+    assert "contract_name" in html
+
+    embedded = _extract_embedded_data(html)
+    assert sorted(r["contract_name"] for r in embedded["rows"]) == ["Accounts_Cards", "Dashboard"]
+
+
 def test_render_trace_id_is_not_a_standalone_column_but_stays_in_drilldown_data():
     report = ComparisonReport(
         contract_id="c",

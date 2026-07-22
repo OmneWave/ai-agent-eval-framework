@@ -172,6 +172,12 @@ class WorkflowContract(BaseModel):
 
     workflow: str
     contract_version: str
+    name: str | None = None
+    """Human-friendly display label (e.g. a page name like ``Accounts_Cards``),
+    distinct from ``contract_id`` (``{workflow}@{contract_version}``, a machine
+    identifier). Optional -- reports fall back to `contract_id` wherever a
+    contract needs a label and `name` wasn't set, so existing contracts with
+    no `name:` keep working unchanged."""
     skills: SkillsSpec
     knowledge: list[str] = Field(default_factory=list)
     resources: ResourceRegistry = Field(default_factory=ResourceRegistry)

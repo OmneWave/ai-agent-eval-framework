@@ -15,6 +15,7 @@ and why it exists. For the plugin behavior that reads each section, see
 |---|---|---|---|
 | `workflow` | `string` | yes | Identifier for the workflow this contract governs, e.g. `"ui_to_api_binding"`. |
 | `contract_version` | `string` | yes | Version string, e.g. `"1.0.0"`. Combined with `workflow` to form `contract_id` (`workflow@contract_version`). |
+| `name` | `string` | no, default `null` | Human-friendly display label (e.g. a page name like `Accounts_Cards`), distinct from `contract_id` (the machine identifier). Shown in `compare-traces`/`merge-html-reports` HTML output as its own filterable column (falls back to nothing shown if unset — reports don't require it). |
 | `skills` | object | yes | See [Skills](#skills). |
 | `knowledge` | `[string]` | no, default `[]` | See [Knowledge](#knowledge). |
 | `resources` | object | no, default empty | The resource registry — see [Resources](#resources). |
@@ -381,6 +382,7 @@ for them:
 ```yaml
 workflow: ui_to_api_binding
 contract_version: "1.0.0"
+name: PetTable
 
 skills:
   required: [ui_to_api_binding_workflow, variables, actions, markup]

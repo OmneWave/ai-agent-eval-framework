@@ -71,6 +71,11 @@ class ComparisonRow(BaseModel):
     error_message: str | None = None
 
     contract_id: str | None = None
+    contract_name: str | None = None
+    """The contract's human-friendly `name` (see `WorkflowContract.name`), if
+    it declared one -- kept separate from `contract_id` (the machine
+    identifier) so the report can display/filter by whichever is more
+    meaningful, e.g. a page name instead of `workflow@version`."""
     model_name: str | None = None
     user_id: str | None = None
     entry_agent: str | None = None
@@ -128,6 +133,10 @@ class ComparisonReport(BaseModel):
     @property
     def contract_ids(self) -> list[str]:
         return unique_in_order(row.contract_id for row in self.rows)
+
+    @property
+    def contract_names(self) -> list[str]:
+        return unique_in_order(row.contract_name for row in self.rows)
 
     def filtered_by_model(self, model_name: str) -> "ComparisonReport":
         wanted = model_name.strip().lower()

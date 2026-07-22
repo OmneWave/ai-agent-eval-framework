@@ -56,7 +56,10 @@ class ComparisonPipeline:
                 outcomes.append(TraceOutcome(trace_id=trace_id, error=str(exc)))
 
         report = build_comparison_report(
-            self.contract.contract_id, outcomes, user_id_key=self.user_id_key
+            self.contract.contract_id,
+            outcomes,
+            contract_name=self.contract.name,
+            user_id_key=self.user_id_key,
         )
         if self.model_filter:
             report = report.filtered_by_model(self.model_filter)
