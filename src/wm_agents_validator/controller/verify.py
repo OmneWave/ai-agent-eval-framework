@@ -5,6 +5,7 @@ from pathlib import Path
 
 from wm_agents_validator.contracts.loader import load_contract
 from wm_agents_validator.models.plugin_result import EvalContext
+from wm_agents_validator.models.raw_trace import RawTracePayload
 from wm_agents_validator.models.trace_snapshot import TraceSnapshot
 from wm_agents_validator.models.verification import VerificationReport
 from wm_agents_validator.models.workflow_contract import WorkflowContract
@@ -16,6 +17,7 @@ from wm_agents_validator.controller.fetch import fetch_and_normalize
 class VerifyResult:
     report: VerificationReport
     snapshot: TraceSnapshot
+    payload: RawTracePayload | None = None
 
 
 def load_snapshot(path: str | Path) -> TraceSnapshot:
@@ -46,6 +48,9 @@ def run_verification(
             delay_sec=delay_sec,
         )
         snapshot = fetch_result.snapshot
+        payload = fetch_result.payload
+    else:
+        payload = None
 
     report = run_plugins(snapshot, contract, plugins=plugins, context=context)
-    return VerifyResult(report=report, snapshot=snapshot)
+    return VerifyResult(report=report, snapshot=snapshot, payload=payload)

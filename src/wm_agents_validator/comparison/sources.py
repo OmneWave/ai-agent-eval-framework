@@ -134,16 +134,18 @@ class MetadataFilterTraceSource:
         *,
         limit: int = 50,
         environment: str | None = None,
+        user_id: str | None = None,
     ) -> None:
         if not metadata_filters:
             raise ValueError("metadata_filters must be a non-empty list")
         self._filters = _build_metadata_filter_conditions(metadata_filters)
         self._limit = limit
         self._environment = environment
+        self._user_id = user_id
 
     def get_trace_ids(self) -> list[str]:
         return search_trace_ids_by_metadata(
-            self._filters, limit=self._limit, environment=self._environment
+            self._filters, limit=self._limit, environment=self._environment, user_id=self._user_id
         )
 
 

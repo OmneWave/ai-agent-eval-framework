@@ -60,6 +60,7 @@ class ComparisonPipeline:
             outcomes,
             contract_name=self.contract.name,
             user_id_key=self.user_id_key,
+            workflow=self.contract.workflow,
         )
         if self.model_filter:
             report = report.filtered_by_model(self.model_filter)

@@ -100,6 +100,11 @@ class ComparisonRow(BaseModel):
     overall_score: float | None = None
     passed: bool | None = None
 
+    input_screenshot: str | None = None
+    """Base64 data-URI of the input design screenshot (screenshot_to_code workflow only)."""
+    output_screenshot: str | None = None
+    """Base64 data-URI of the generated page preview (screenshot_to_code workflow only)."""
+
     plugin_scores: list[PluginScore] = Field(default_factory=list)
     """Each plugin's own score + the violations that explain it — the single
     source of truth for "why" a trace scored the way it did. There is

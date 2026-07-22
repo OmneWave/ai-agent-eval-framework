@@ -18,6 +18,10 @@ from wm_agents_validator.models.comparison import (
     PluginViolation,
     unique_in_order,
 )
+from wm_agents_validator.trace.screenshots import (
+    extract_input_screenshot,
+    extract_output_screenshot,
+)
 
 
 def _extract_checks(evidence: dict) -> list[PluginCheck]:
@@ -56,11 +60,18 @@ class TraceOutcome:
 
 
 def _row_from_success(
-    outcome: TraceOutcome, *, contract_id: str, contract_name: str | None, user_id_key: str
+    outcome: TraceOutcome, *, contract_id: str, contract_name: str | None, user_id_key: str, is_screenshot_workflow: bool = False
 ) -> ComparisonRow:
     assert outcome.verify_result is not None
     snapshot = outcome.verify_result.snapshot
     report = outcome.verify_result.report
+    payload = outcome.verify_result.payload
+
+    input_screenshot: str | None = None
+    output_screenshot: str | None = None
+    if is_screenshot_workflow:
+        input_screenshot = extract_input_screenshot(snapshot, payload)
+        output_screenshot = extract_output_screenshot(snapshot, payload)
 
     plugin_scores = [
         PluginScore(
@@ -102,6 +113,8 @@ def _row_from_success(
         total_cost_usd=snapshot.total_cost_usd,
         overall_score=report.overall_score,
         passed=report.passed,
+        input_screenshot=input_screenshot,
+        output_screenshot=output_screenshot,
         plugin_scores=plugin_scores,
         generations=generations,
     )
@@ -123,9 +136,13 @@ def build_comparison_report(
     *,
     contract_name: str | None = None,
     user_id_key: str = "user_id",
+    workflow: str = "",
 ) -> ComparisonReport:
+    is_screenshot = workflow.startswith("screenshot_to_code")
     rows = [
-        _row_from_success(outcome, contract_id=contract_id, contract_name=contract_name, user_id_key=user_id_key)
+        _row_from_success(
+            outcome, contract_id=contract_id, contract_name=contract_name, user_id_key=user_id_key, is_screenshot_workflow=is_screenshot
+        )
         if outcome.verify_result is not None
         else _row_from_error(outcome, contract_id=contract_id, contract_name=contract_name)
         for outcome in outcomes
