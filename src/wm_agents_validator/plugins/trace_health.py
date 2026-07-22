@@ -18,37 +18,50 @@ class TraceHealthPlugin:
         violations: list[Violation] = []
         checks: dict[str, dict] = {}
 
-        status_label = "trace status"
+        # `snapshot.status == "error"` and `snapshot.errors` being non-empty
+        # are, in the overwhelming common case, the SAME underlying fact seen
+        # two ways: `_derive_status` sets status="error" precisely when a
+        # tool call failed (or a span's level is ERROR) -- exactly the
+        # condition `errors` itself walks the spans for. Scoring them as two
+        # separate checks double-counts one root cause as two failures, which
+        # -- especially for a plugin with as few checks as this one -- can
+        # swing the whole plugin's score from "one recoverable hiccup" all
+        # the way to a stark 0%, misleadingly implying total failure. One
+        # merged check keeps the trace-status signal (still catches the rare
+        # case where status is "error" for a reason with no matching span,
+        # e.g. a trace-level flag alone) without counting it twice.
+        health_label = "trace health"
         if snapshot.status == "error":
-            checks[status_label] = {"passed": False, "detail": "trace status is error"}
             violations.append(
                 Violation(
                     code="trace_error_status",
                     message="Trace status is error",
                     plugin=self.name,
-                    resource=status_label,
+                    resource=health_label,
                 )
             )
-        else:
-            checks[status_label] = {"passed": True, "detail": f"status={snapshot.status}"}
-
-        error_spans_label = "error spans"
         for err in snapshot.errors:
             violations.append(
                 Violation(
                     code="trace_error_span",
                     message=f"Error span: {err.name} — {err.message or 'no message'}",
                     plugin=self.name,
-                    resource=error_spans_label,
+                    resource=health_label,
                     evidence={"error": err.model_dump()},
                 )
             )
-        checks[error_spans_label] = (
-            {
+
+        if snapshot.status == "error" or snapshot.errors:
+            reasons = []
+            if snapshot.status == "error":
+                reasons.append("trace status is error")
+            if snapshot.errors:
+                reasons.append(f"{len(snapshot.errors)} error span(s) present")
+            checks[health_label] = {
                 "passed": False,
-                "detail": f"{len(snapshot.errors)} error span(s) present",
+                "detail": "; ".join(reasons),
                 # One line per actual error (name, message, when) -- without
-                # this, only the count above would ever reach the report,
+                # this, only the summary above would ever reach the report,
                 # since these errors all share this check's own resource
                 # label and would otherwise be deduped out of the violations
                 # list as "just restating the check". See PluginCheck docs.
@@ -58,9 +71,8 @@ class TraceHealthPlugin:
                     for err in snapshot.errors
                 ],
             }
-            if snapshot.errors
-            else {"passed": True, "detail": "no error spans"}
-        )
+        else:
+            checks[health_label] = {"passed": True, "detail": f"status={snapshot.status}, no error spans"}
 
         javaservice_active = any(write.resource.split(".")[0] == "javaservice" for write in contract.output)
         build_passed = True

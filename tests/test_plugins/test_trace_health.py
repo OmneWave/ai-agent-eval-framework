@@ -7,13 +7,12 @@ def test_trace_health_passes_with_fixture(snapshot, contract):
     assert result.passed
     assert result.score == 1.0
     assert result.violations == []
-    # Standard evidence["checks"] contract: trace status and error spans are
-    # always checked; "build" only shows up when javaservice is an active
-    # resource (this contract has none), so a clean pass still shows what
-    # was actually verified.
+    # Standard evidence["checks"] contract: "trace health" (status + error
+    # spans, merged -- see below) is always checked; "build" only shows up
+    # when javaservice is an active resource (this contract has none), so a
+    # clean pass still shows what was actually verified.
     assert result.evidence["checks"] == {
-        "trace status": {"passed": True, "detail": f"status={snapshot.status}"},
-        "error spans": {"passed": True, "detail": "no error spans"},
+        "trace health": {"passed": True, "detail": f"status={snapshot.status}, no error spans"},
         "error time": {"passed": True, "detail": "no errors"},
     }
 
@@ -26,10 +25,10 @@ def test_trace_health_flags_error_status(snapshot, contract):
     assert not result.passed
     codes = [v.code for v in result.violations]
     assert "trace_error_status" in codes
-    assert result.evidence["checks"]["trace status"]["passed"] is False
+    assert result.evidence["checks"]["trace health"]["passed"] is False
 
     violation = next(v for v in result.violations if v.code == "trace_error_status")
-    assert violation.resource == "trace status"
+    assert violation.resource == "trace health"
 
 
 def test_trace_health_flags_error_spans(snapshot, contract):
@@ -57,16 +56,16 @@ def test_trace_health_flags_error_spans(snapshot, contract):
     assert not result.passed
     codes = [v.code for v in result.violations]
     assert "trace_error_span" in codes
-    assert result.evidence["checks"]["error spans"]["passed"] is False
-    assert "1 error span" in result.evidence["checks"]["error spans"]["detail"]
+    assert result.evidence["checks"]["trace health"]["passed"] is False
+    assert "1 error span" in result.evidence["checks"]["trace health"]["detail"]
 
     violation = next(v for v in result.violations if v.code == "trace_error_span")
-    assert violation.resource == "error spans"
+    assert violation.resource == "trace health"
 
     # The per-error breakdown (name/message/timestamp) must survive into the
     # check's detail_items, not just the generic count -- this is what the
     # report's chevron disclosure renders.
-    detail_items = result.evidence["checks"]["error spans"]["detail_items"]
+    detail_items = result.evidence["checks"]["trace health"]["detail_items"]
     assert len(detail_items) == 1
     assert "validation_error" in detail_items[0]
     assert "bad input" in detail_items[0]
@@ -88,7 +87,41 @@ def test_trace_health_reports_one_detail_item_per_error(snapshot, contract):
 
     result = TraceHealthPlugin().evaluate(snapshot, contract)
 
-    detail_items = result.evidence["checks"]["error spans"]["detail_items"]
+    detail_items = result.evidence["checks"]["trace health"]["detail_items"]
     assert len(detail_items) == 2
     assert any("failure 0" in item for item in detail_items)
     assert any("failure 1" in item for item in detail_items)
+
+
+def test_trace_health_does_not_double_count_one_tool_failure_as_two_checks(snapshot, contract):
+    # Regression: a single failed tool call (even if retried and later
+    # recovered) makes both TraceSnapshot.status == "error" (_derive_status
+    # treats any failed tool as reason enough) and TraceSnapshot.errors
+    # non-empty (the same failed span, walked directly) -- the same root
+    # cause. Scoring these as two separate checks meant one transient,
+    # recoverable tool failure could zero out this plugin's score entirely
+    # (0/2), even when nothing else was wrong. They must merge into one
+    # check, so a single failure only ever costs one check, not two.
+    snapshot.status = "error"
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-transient-failure",
+            name="write_file",
+            type="TOOL",
+            timestamp="2026-01-01T10:00:14Z",
+            success=False,
+            error_message="Component folder does not exist",
+        )
+    )
+
+    result = TraceHealthPlugin().evaluate(snapshot, contract)
+
+    # Exactly one check represents this (no javaservice output on this
+    # contract, so "build" never appears; "error time" is informational,
+    # added after scoring) -- failing it gives 0%, same as before, but it's
+    # one real check, not two counted against a single fact.
+    assert set(result.evidence["checks"].keys()) == {"trace health", "error time"}
+    assert result.score == 0.0
+    codes = [v.code for v in result.violations]
+    assert codes.count("trace_error_status") == 1
+    assert codes.count("trace_error_span") == 1

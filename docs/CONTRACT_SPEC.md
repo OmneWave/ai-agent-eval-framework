@@ -198,15 +198,21 @@ Checked by the `input_context` plugin:
   lookup tools). A word appearing only in an unrelated *write* call never grounds a term — that's
   `match`'s job (see [output](#output)), checked separately against write-tool calls.
 - (Inverse direction, contract-wide) Were any files read via `read_files` that aren't
-  declared anywhere under `input_context`/`output`, and aren't in `knowledge`? (scope creep)
+  declared anywhere under `input_context`/`output`, and aren't in `knowledge`? (scope creep) —
+  **only enforced as a failure when the contract actually declared some context expectation**
+  (`input_context` and/or `knowledge` non-empty). A contract with both empty has expressed no
+  opinion about what should be read, so unrelated reads are reported informationally only in
+  that case, never as a failure — otherwise this would be the *only* check in the plugin for
+  such a contract, and a single scope-creep flag would zero out the whole plugin's score
+  regardless of every other (declared, passing) resource.
 - (Contract-wide) Were all qualifier terms parsed from **`output[]`** references also
   observed somewhere in the trace? (since `output` has no content-check of its own; this one
   stays trace-wide rather than read-tool-scoped, since an output qualifier like an `operationId`
   typically surfaces in the write/creation call itself, not a read call)
 
 Under the strict scoring rule, **every** one of the above must hold for
-`input_context.passed = True` — a missing term, a missing path, or one unrelated read all
-fail the plugin, not just dilute its score.
+`input_context.passed = True` — a missing term, a missing path, or one unrelated read (when
+scope was actually declared) all fail the plugin, not just dilute its score.
 
 ---
 

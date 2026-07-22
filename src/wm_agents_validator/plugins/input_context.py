@@ -53,7 +53,12 @@ class InputContextPlugin:
 
     It also checks the inverse direction: files read via ``read_files`` that
     don't match any resource declared under ``input_context`` or ``output``
-    (nor exempted via ``knowledge``). This surfaces scope creep.
+    (nor exempted via ``knowledge``). This surfaces scope creep -- but only as
+    a real failure when the contract's ``input_context``/``knowledge`` are
+    non-empty (i.e. it actually declared some context expectation to have
+    crept out of); with both empty, unrelated reads are reported
+    informationally only, never as a failure -- see the "Scope declared"
+    note in ``evaluate()``.
 
     Every check must pass for ``passed=True`` -- no partial credit (see the
     Scoring section of the contract schema). ``score`` is the pass ratio,
@@ -156,9 +161,31 @@ class InputContextPlugin:
         knowledge_patterns = list(contract.knowledge)
         unrelated_reads = self._find_unrelated_reads(all_expected_paths + knowledge_patterns, span_index)
 
+        # Scope creep is only a meaningful failure when the contract actually
+        # declared some context expectation to have crept out of. A contract
+        # with an empty `input_context` and empty `knowledge` has expressed no
+        # opinion about what should be read -- enforcing "must read nothing
+        # beyond output's own paths" for it would turn any exploratory read
+        # (common and often necessary) into an automatic failure, and since
+        # this would then be the *only* check in this plugin's `checks` map,
+        # it would single-handedly zero out the whole plugin's score. Report
+        # unrelated reads informationally in that case instead of failing on
+        # them; a contract that lists even one input_context entry (or one
+        # knowledge pattern) is treated as opting in to real enforcement.
+        scope_declared = bool(contract.input_context) or bool(knowledge_patterns)
+
         unrelated_label = "unrelated reads"
-        if unrelated_reads:
+        if not scope_declared:
+            unrelated_detail = (
+                f"not enforced -- input_context/knowledge are both empty, so there's no declared "
+                f"scope to violate ({len(unrelated_reads)} read(s) observed): {unrelated_reads}"
+                if unrelated_reads
+                else "no unrelated files read"
+            )
+            unrelated_passed = True
+        elif unrelated_reads:
             unrelated_detail = f"scope creep -- read but not declared for any resource: {unrelated_reads}"
+            unrelated_passed = False
             violations.append(
                 Violation(
                     code="unrelated_context_fetched",
@@ -174,6 +201,7 @@ class InputContextPlugin:
             )
         else:
             unrelated_detail = "no unrelated files read"
+            unrelated_passed = True
 
         # Standard "checks" contract (see PluginResult docs / Scoring section):
         # one entry per named thing this plugin evaluated. Every entry must
@@ -190,7 +218,7 @@ class InputContextPlugin:
                     f"missing: {output_missing}" if output_missing else "all output-declared qualifiers observed"
                 ),
             }
-        checks[unrelated_label] = {"passed": not unrelated_reads, "detail": unrelated_detail}
+        checks[unrelated_label] = {"passed": unrelated_passed, "detail": unrelated_detail}
 
         passed, score = score_from_checks(checks)
 
