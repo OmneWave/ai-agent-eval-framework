@@ -1,5 +1,6 @@
 workflow: screenshot_to_code
 contract_version: "1.0.0"
+name: S2C_BB_Login
 skills:
   required:
     - components-list

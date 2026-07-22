@@ -55,7 +55,9 @@ class TraceOutcome:
     error: str | None = None
 
 
-def _row_from_success(outcome: TraceOutcome, *, contract_id: str, user_id_key: str) -> ComparisonRow:
+def _row_from_success(
+    outcome: TraceOutcome, *, contract_id: str, contract_name: str | None, user_id_key: str
+) -> ComparisonRow:
     assert outcome.verify_result is not None
     snapshot = outcome.verify_result.snapshot
     report = outcome.verify_result.report
@@ -88,6 +90,7 @@ def _row_from_success(outcome: TraceOutcome, *, contract_id: str, user_id_key: s
         trace_id=outcome.trace_id,
         status="ok",
         contract_id=contract_id,
+        contract_name=contract_name,
         model_name=snapshot.metadata.get("model_name"),
         user_id=snapshot.metadata.get(user_id_key),
         entry_agent=snapshot.entry_agent,
@@ -104,11 +107,12 @@ def _row_from_success(outcome: TraceOutcome, *, contract_id: str, user_id_key: s
     )
 
 
-def _row_from_error(outcome: TraceOutcome, *, contract_id: str) -> ComparisonRow:
+def _row_from_error(outcome: TraceOutcome, *, contract_id: str, contract_name: str | None) -> ComparisonRow:
     return ComparisonRow(
         trace_id=outcome.trace_id,
         status="error",
         contract_id=contract_id,
+        contract_name=contract_name,
         error_message=outcome.error or "unknown error",
     )
 
@@ -117,12 +121,13 @@ def build_comparison_report(
     contract_id: str,
     outcomes: list[TraceOutcome],
     *,
+    contract_name: str | None = None,
     user_id_key: str = "user_id",
 ) -> ComparisonReport:
     rows = [
-        _row_from_success(outcome, contract_id=contract_id, user_id_key=user_id_key)
+        _row_from_success(outcome, contract_id=contract_id, contract_name=contract_name, user_id_key=user_id_key)
         if outcome.verify_result is not None
-        else _row_from_error(outcome, contract_id=contract_id)
+        else _row_from_error(outcome, contract_id=contract_id, contract_name=contract_name)
         for outcome in outcomes
     ]
     return ComparisonReport(contract_id=contract_id, rows=rows)

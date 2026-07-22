@@ -24,6 +24,7 @@ debug-trace = "wm_agents_validator.cli.debug_trace:main"
 run-verify = "wm_agents_validator.cli.run_verify:main"
 compare-traces = "wm_agents_validator.cli.compare_traces:main"
 generate-contract = "wm_agents_validator.cli.generate_contract:main"
+merge-html-reports = "wm_agents_validator.cli.merge_html_reports:main"
 
 [build-system]
 requires = ["hatchling"]
