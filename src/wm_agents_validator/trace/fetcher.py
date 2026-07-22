@@ -275,6 +275,7 @@ def search_trace_ids_by_metadata(
     *,
     limit: int = 50,
     environment: str | None = None,
+    user_id: str | None = None,
 ) -> list[str]:
     """Finds up to `limit` trace IDs matching structured metadata filter conditions,
     applied server-side via Langfuse's actual SDK method (`client.api.trace.list`).
@@ -304,6 +305,7 @@ def search_trace_ids_by_metadata(
             limit=page_size,
             page=page,
             environment=environment,
+            user_id=user_id,
         )
         batch = response.data or []
         for item in batch:

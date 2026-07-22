@@ -181,6 +181,11 @@ _TEMPLATE = """<!DOCTYPE html>
   .heatmap-cell { border-radius: 6px; font-weight: 600; }
   .heatmap-cell.empty-cell { color: var(--muted); font-weight: 400; background: transparent; }
   .heatmap-cell-detail { font-size: 10px; font-weight: 400; opacity: .8; }
+  .screenshots-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .screenshot-panel { display: flex; flex-direction: column; gap: 8px; }
+  .screenshot-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  .screenshot-img { width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; background: #0a0c10; }
+  .screenshot-missing { display: flex; align-items: center; justify-content: center; height: 140px; background: var(--bg); border-radius: 6px; border: 1px dashed var(--border); color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -587,6 +592,24 @@ _TEMPLATE = """<!DOCTYPE html>
         </div>
       `).join('') || '<div class="gen-line">No generation-level data captured.</div>';
 
+      const hasScreenshots = row.input_screenshot || row.output_screenshot;
+      const screenshotsHtml = hasScreenshots ? `
+        <div class="screenshots-row">
+          <div class="screenshot-panel">
+            <div class="screenshot-label">Input — Figma Design</div>
+            ${row.input_screenshot
+              ? `<img class="screenshot-img" src="${row.input_screenshot}" alt="input screenshot" loading="lazy">`
+              : '<div class="screenshot-missing">not found</div>'}
+          </div>
+          <div class="screenshot-panel">
+            <div class="screenshot-label">Output — Generated Preview</div>
+            ${row.output_screenshot
+              ? `<img class="screenshot-img" src="${row.output_screenshot}" alt="output screenshot" loading="lazy">`
+              : '<div class="screenshot-missing">not found</div>'}
+          </div>
+        </div>
+      ` : '';
+
       return `
         <div class="detail-meta">
           <span class="mono">Trace: ${esc(row.trace_id)}</span>
@@ -602,6 +625,7 @@ _TEMPLATE = """<!DOCTYPE html>
             ${generationsHtml}
           </div>
         </div>
+        ${screenshotsHtml}
       `;
     }
 
