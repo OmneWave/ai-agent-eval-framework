@@ -172,6 +172,74 @@ def test_input_context_flags_unrelated_file_read(snapshot, contract):
     assert result.evidence["checks"]["unrelated reads"]["passed"] is False
 
 
+def test_input_context_does_not_fail_on_unrelated_reads_when_no_scope_declared(snapshot, contract):
+    # Regression: with input_context AND knowledge both empty, the contract
+    # has expressed no opinion about what should be read -- an unrelated read
+    # must be reported informationally, not fail the plugin. Previously this
+    # was the *only* check in the plugin's checks map in this scenario, so a
+    # single scope-creep flag zeroed out the whole plugin's score (0%),
+    # regardless of every other (declared, passing) resource being fine.
+    bare_contract = contract.model_copy(update={"input_context": [], "knowledge": []})
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-read-unrelated",
+            name="read_files",
+            type="TOOL",
+            parent_id="span-deleg-ui",
+            agent_id="wm_ui_expert",
+            timestamp="2026-01-01T10:00:11Z",
+            end_time=None,
+            level="DEFAULT",
+            input={"file_paths": ["src/main/webapp/pages/OtherPage/OtherPage.html"]},
+            output=None,
+            success=True,
+        )
+    )
+
+    result = InputContextPlugin().evaluate(snapshot, bare_contract)
+
+    assert result.passed
+    assert result.score == 1.0
+    assert result.violations == []
+    # The fixture's own petstore read is now unrelated too, once input_context
+    # (which normally declares it) is cleared -- not the point of this test,
+    # just a side effect of removing that declaration.
+    assert "src/main/webapp/pages/OtherPage/OtherPage.html" in result.evidence["unrelated_reads"]
+    check = result.evidence["checks"]["unrelated reads"]
+    assert check["passed"] is True
+    assert "not enforced" in check["detail"]
+
+
+def test_input_context_still_enforces_scope_when_knowledge_alone_is_declared(snapshot, contract):
+    # A contract can opt into enforcement via `knowledge` alone, without any
+    # input_context entries -- it's still expressing an opinion about scope.
+    knowledge_only_contract = contract.model_copy(
+        update={"input_context": [], "knowledge": ["/catalog/some-doc.md"]}
+    )
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-read-unrelated",
+            name="read_files",
+            type="TOOL",
+            parent_id="span-deleg-ui",
+            agent_id="wm_ui_expert",
+            timestamp="2026-01-01T10:00:11Z",
+            end_time=None,
+            level="DEFAULT",
+            input={"file_paths": ["src/main/webapp/pages/OtherPage/OtherPage.html"]},
+            output=None,
+            success=True,
+        )
+    )
+
+    result = InputContextPlugin().evaluate(snapshot, knowledge_only_contract)
+
+    assert not result.passed
+    codes = [v.code for v in result.violations]
+    assert "unrelated_context_fetched" in codes
+    assert result.evidence["checks"]["unrelated reads"]["passed"] is False
+
+
 def test_input_context_does_not_flag_knowledge_reads(snapshot, contract):
     snapshot.spans.append(
         SpanRecord(
