@@ -27,7 +27,7 @@ The evaluation engine works in four stages:
 
 ## Why this is useful
 
-This framework helps the WaveMaker AI platform identify the most suitable model for build use cases. It provides a consistent and objective way to evaluate models against a defined benchmark and measure their performance through a score. For enterprise teams using the platform, this enables confident decision-making by validating whether a model meets the required standards and performs reliably for business-critical workflows.
+This framework helps Any AI Agent Harness to identify the most suitable model for build use cases. It provides a consistent and objective way to evaluate models against a defined benchmark and measure their performance through a score. For enterprise teams using the platform, this enables confident decision-making by validating whether a model meets the required standards and performs reliably for business-critical workflows.
 
 ## What makes it a strong benchmark
 
@@ -256,7 +256,7 @@ always write the identical entry.
 
 **Paths are derived, not typed, by default.** `path` is optional on every registry entry — when
 omitted, it's computed from the resource's type + name (+ page name, for page-scoped types) via a
-fixed convention built from the real WaveMaker project layout:
+fixed convention built from the real AI Agent Harness project layout:
 
 | Type | Convention |
 |---|---|
