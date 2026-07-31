@@ -1,0 +1,97 @@
+workflow: screenshot_to_code_dashboard
+contract_version: "1.0.0"
+
+skills:
+  required:
+    - components-list
+    - page-layouts
+    - container-system
+    - layout-rules
+    - widget-defaults
+    - interaction-patterns
+    - pattern-detection
+    - new_page_from_screenshot_workflow
+    - screenshot-to-wavemaker-web
+    - example-dashboard
+  optional:
+  - foundation-tokens
+  - widget-templates
+  - styling-system
+  - token-schema
+  - phase3-tokens
+  - variables
+  - partial-templates
+  - verification-checklist
+  - advanced-combined
+  - output-cloud
+
+knowledge: []
+
+resources:
+  page:
+    - name: Dashboard
+      path: src/main/webapp/pages/Dashboard/Dashboard.html
+    - name: header
+      path: src/main/webapp/pages/header/header.html
+    - name: leftnav
+      path: src/main/webapp/pages/leftnav/leftnav.html
+    - name: dashboardLeftnav
+      path: src/main/webapp/pages/dashboardLeftnav/dashboardLeftnav.html
+    - name: dashboardHeader
+      path: src/main/webapp/pages/dashboardHeader/dashboardHeader.html
+  design_tokens:
+    - name: tokens-plan
+      path: src/main/webapp/pages/Dashboard/Dashboard.tokens-plan.json
+    - name: layout-plan
+      path: src/main/webapp/pages/Dashboard/Dashboard.layout-plan.json
+    - name: components-anchor
+      path: src/main/webapp/design-tokens/overrides/components/anchor/anchor.json
+    - name: components-button
+      path: src/main/webapp/design-tokens/overrides/components/button/button.json
+    - name: components-checkbox
+      path: src/main/webapp/design-tokens/overrides/components/checkbox/checkbox.json
+    - name: components-container
+      path: src/main/webapp/design-tokens/overrides/components/container/container.json
+    - name: components-icon
+      path: src/main/webapp/design-tokens/overrides/components/icon/icon.json
+    - name: components-picture
+      path: src/main/webapp/design-tokens/overrides/components/picture/picture.json
+    - name: components-label
+      path: src/main/webapp/design-tokens/overrides/components/label/label.json
+    - name: global-color-light
+      path: src/main/webapp/design-tokens/overrides/global/color/color.light.json
+    - name: components-page-header
+      path: src/main/webapp/design-tokens/overrides/components/page-header/page-header.json
+    - name: components-page-left-nav
+      path: src/main/webapp/design-tokens/overrides/components/page-left-nav/page-left-nav.json
+
+input_context:
+  - resource: page.header
+  - resource: page.leftnav
+
+output:
+  - resource: page.Dashboard
+    operation: CREATE
+  - resource: page.dashboardHeader
+    operation: CREATE
+  - resource: page.dashboardLeftnav
+    operation: CREATE
+  - resource: design_tokens.components-icon
+    operation: CREATE
+  - resource: design_tokens.components-picture
+    operation: CREATE
+  - resource: design_tokens.tokens-plan
+    operation: CREATE
+  - resource: design_tokens.layout-plan
+    operation: CREATE
+  - resource: design_tokens.components-container
+    operation: CREATE
+  - resource: design_tokens.components-label
+    operation: CREATE
+  - resource: design_tokens.global-color-light
+    operation: CREATE
+
+tools:
+  required: [write_file, load_skill, ui_getPageScreenshot, platform_createWebPage, find_files_by_glob, platform_getSessionResource, platform_listPages]
+  optional: [ui_createNonApiAwareVariable, read_files]
+  forbidden: [delete_file]

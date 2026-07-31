@@ -1,0 +1,406 @@
+{
+  "trace_id": "test-trace-001",
+  "session_id": "proj:session-1",
+  "run_id": "run-abc123",
+  "entry_agent": "wm_agent",
+  "status": "success",
+  "duration_ms": 45000,
+  "user_prompt": "Bind the form on UserPage to UserService",
+  "final_response": "Form bound successfully.",
+  "metadata": {
+    "entryagentid": "wm_agent",
+    "projectid": "test-project",
+    "contract_id": "ui_to_api_binding@1.0.0"
+  },
+  "custom_events": [],
+  "generations": [
+    {
+      "name": "wm_backend_expert",
+      "agent_id": "wm_backend_expert",
+      "timestamp": "2026-01-01T10:00:04Z",
+      "input_tokens": 1200,
+      "output_tokens": 300,
+      "total_tokens": 1500,
+      "cost_usd": 0.012
+    },
+    {
+      "name": "wm_ui_expert",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:09Z",
+      "input_tokens": 2000,
+      "output_tokens": 500,
+      "total_tokens": 2500,
+      "cost_usd": 0.018
+    }
+  ],
+  "skill_loads": [
+    {
+      "skill_names": ["ui_to_api_binding_workflow"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:00Z",
+      "agent_id": "wm_agent",
+      "error_message": null
+    },
+    {
+      "skill_names": ["explore-codebase"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:02Z",
+      "agent_id": "wm_backend_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["explore-api"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:03Z",
+      "agent_id": "wm_backend_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["variables"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:08Z",
+      "agent_id": "wm_ui_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["actions"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:09Z",
+      "agent_id": "wm_ui_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["markup"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:12Z",
+      "agent_id": "wm_ui_expert",
+      "error_message": null
+    },
+    {
+      "skill_names": ["javascript"],
+      "success": true,
+      "timestamp": "2026-01-01T10:00:13Z",
+      "agent_id": "wm_ui_expert",
+      "error_message": null
+    }
+  ],
+  "tools_summary": {
+    "called": [
+      "load_skill",
+      "start_new_conversation_with_agent",
+      "read_files",
+      "find_files_by_glob",
+      "platform_getServiceDetails",
+      "grep_in_files",
+      "platform_listPageVariables",
+      "get_tool_schema",
+      "execute_tool",
+      "ui_createApiAwareVariable",
+      "ui_updateVariable",
+      "ui_createNonApiAwareVariable",
+      "edit_file_content",
+      "write_file"
+    ],
+    "success": [
+      "load_skill",
+      "start_new_conversation_with_agent",
+      "read_files",
+      "find_files_by_glob",
+      "platform_getServiceDetails",
+      "grep_in_files",
+      "platform_listPageVariables",
+      "get_tool_schema",
+      "execute_tool",
+      "ui_createApiAwareVariable",
+      "ui_updateVariable",
+      "ui_createNonApiAwareVariable",
+      "edit_file_content",
+      "write_file"
+    ],
+    "failed": []
+  },
+  "spans": [
+    {
+      "id": "test-trace-001",
+      "name": "wm_agent",
+      "type": "AGENT_RUN",
+      "parent_id": null,
+      "agent_id": "wm_agent",
+      "timestamp": "2026-01-01T10:00:00Z",
+      "end_time": null,
+      "level": null,
+      "input": null,
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-load-skill",
+      "name": "load_skill",
+      "type": "TOOL",
+      "parent_id": "test-trace-001",
+      "agent_id": "wm_agent",
+      "timestamp": "2026-01-01T10:00:01Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"skills": ["ui_to_api_binding_workflow"]},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-deleg-backend",
+      "name": "start_new_conversation_with_agent",
+      "type": "TOOL",
+      "parent_id": "test-trace-001",
+      "agent_id": "wm_agent",
+      "timestamp": "2026-01-01T10:00:04Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"target_agent": "wm_backend_expert", "task": "Explore APIs"},
+      "output": {"status": "success"},
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-read-files",
+      "name": "read_files",
+      "type": "TOOL",
+      "parent_id": "span-deleg-backend",
+      "agent_id": "wm_backend_expert",
+      "timestamp": "2026-01-01T10:00:05Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "paths": ["services/petstore/designtime/petstore_apiTarget.json"],
+        "operationId": "petstore_findPetsByTags"
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-find-files",
+      "name": "find_files_by_glob",
+      "type": "TOOL",
+      "parent_id": "span-deleg-backend",
+      "agent_id": "wm_backend_expert",
+      "timestamp": "2026-01-01T10:00:06Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"folder_path": "services/petstore", "glob_pattern": "*_API_REST_SERVICE.json"},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-service-details",
+      "name": "platform_getServiceDetails",
+      "type": "TOOL",
+      "parent_id": "span-deleg-backend",
+      "agent_id": "wm_backend_expert",
+      "timestamp": "2026-01-01T10:00:07Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"serviceName": "petstore"},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-grep",
+      "name": "grep_in_files",
+      "type": "TOOL",
+      "parent_id": "span-deleg-backend",
+      "agent_id": "wm_backend_expert",
+      "timestamp": "2026-01-01T10:00:08Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"path": "services/petstore", "regex_pattern": "findPetsByTags"},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-deleg-ui",
+      "name": "start_new_conversation_with_agent",
+      "type": "TOOL",
+      "parent_id": "test-trace-001",
+      "agent_id": "wm_agent",
+      "timestamp": "2026-01-01T10:00:09Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"target_agent": "wm_ui_expert", "task": "Bind UI"},
+      "output": {"status": "success"},
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-list-page-vars",
+      "name": "platform_listPageVariables",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:09Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"pageName": "PetTable"},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-get-tool-schema",
+      "name": "get_tool_schema",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:09Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {"tool_name": "execute_tool"},
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-execute-tool",
+      "name": "execute_tool",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:09Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "tool_name": "platform_getSessionResource",
+        "tool_args": {"resourceType": "page", "resourceName": "PetTable"}
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-create-var",
+      "name": "ui_createApiAwareVariable",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:10Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "path": "src/main/webapp/pages/PetTable/PetTable.variables.json",
+        "service": "petstore",
+        "operationId": "petstore_findPetsByTags"
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-update-var",
+      "name": "ui_updateVariable",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:10Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "path": "src/main/webapp/pages/PetTable/PetTable.variables.json",
+        "variableName": "findPetsByTagsVariable",
+        "updates": {"label": "Update binding after variable creation"}
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-create-nonapi-var",
+      "name": "ui_createNonApiAwareVariable",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:10Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "path": "src/main/webapp/pages/PetTable/PetTable.variables.json",
+        "variableName": "isLoadingVariable",
+        "variableType": "boolean"
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-variable-write",
+      "name": "edit_file_content",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:11Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "file_path": "src/main/webapp/pages/PetTable/PetTable.variables.json",
+        "operationId": "petstore_findPetsByTags"
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-edit-js",
+      "name": "edit_file_content",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:13Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "file_path": "src/main/webapp/pages/PetTable/PetTable.js"
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    },
+    {
+      "id": "span-edit-html",
+      "name": "write_file",
+      "type": "TOOL",
+      "parent_id": "span-deleg-ui",
+      "agent_id": "wm_ui_expert",
+      "timestamp": "2026-01-01T10:00:15Z",
+      "end_time": null,
+      "level": "DEFAULT",
+      "input": {
+        "path": "src/main/webapp/pages/PetTable/PetTable.html",
+        "widgetName": "PetTable",
+        "variableName": "swagger_findPetsByTagsTable1"
+      },
+      "output": null,
+      "success": true,
+      "error_message": null,
+      "note": null
+    }
+  ]
+}

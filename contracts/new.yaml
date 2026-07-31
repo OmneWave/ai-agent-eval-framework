@@ -1,0 +1,82 @@
+workflow: screenshot_to_code
+contract_version: "1.0.0"
+skills:
+  required:
+    - new_page_from_screenshot_workflow
+    - screenshot-to-wavemaker-web
+    - components-list
+    - page-layouts
+    - container-system
+    - layout-rules
+    - widget-templates
+    - widget-defaults
+    - interaction-patterns
+    - pattern-detection
+    - advanced-wizard
+    - advanced-form
+    - output-cloud
+  optional: []
+
+knowledge: []
+
+resources:
+  page:
+    - name: RegisterCompany
+    - name: RegisterCompanyHeader
+    - name: header
+  design_tokens:
+    - name: RegisterCompany-layout-plan
+      path: src/main/webapp/pages/RegisterCompany/RegisterCompany.layout-plan.json
+    - name: RegisterCompany-tokens-plan
+      path: src/main/webapp/pages/RegisterCompany/RegisterCompany.tokens-plan.json
+    - name: components-btn
+      path: src/main/webapp/design-tokens/overrides/components/btn/btn.json
+    - name: components-container
+      path: src/main/webapp/design-tokens/overrides/components/container/container.json
+    - name: components-icon
+      path: src/main/webapp/design-tokens/overrides/components/icon/icon.json
+    - name: components-label
+      path: src/main/webapp/design-tokens/overrides/components/label/label.json
+    - name: global-color-light
+      path: src/main/webapp/design-tokens/overrides/global/color/color.light.json
+
+input_context:
+  - resource: page.header
+
+output:
+  - resource: design_tokens.components-btn
+    operation: CREATE
+  - resource: design_tokens.components-container
+    operation: CREATE
+  - resource: design_tokens.components-icon
+    operation: CREATE
+  - resource: design_tokens.components-label
+    operation: CREATE
+  - resource: design_tokens.global-color-light
+    operation: CREATE
+  - resource: page.RegisterCompany
+    operation: CREATE
+  - resource: design_tokens.RegisterCompany-layout-plan
+    operation: CREATE
+  - resource: design_tokens.RegisterCompany-tokens-plan
+    operation: CREATE
+  - resource: page.RegisterCompany.variable
+    operation: CREATE
+    match: [companyOptions]
+  - resource: page.RegisterCompanyHeader
+    operation: CREATE
+
+tools:
+  required:
+    - find_files_by_glob
+    - load_skill
+    - platform_createWebPage
+    - platform_getSessionResource
+    - platform_listPages
+    - read_files
+    - start_new_conversation_with_agent
+    - ui_createNonApiAwareVariable
+    - ui_getPageScreenshot
+    - write_file
+  optional: []
+  forbidden: []
