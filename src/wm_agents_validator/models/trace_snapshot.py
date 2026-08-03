@@ -269,6 +269,17 @@ _TOOL_PATH_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _coerce_path(value: Any) -> str:
+    """A path-bearing list item is normally a plain string, but some tool schema
+    variants (e.g. ``read_files`` with a per-file ``limit``) wrap it in an object
+    like ``{"path": ..., "limit": 60}`` -- pull the real path out instead of
+    stringifying the whole object, which would otherwise silently corrupt every
+    path-based check (input_context retrieval, unrelated-reads, etc.)."""
+    if isinstance(value, dict):
+        return str(value.get("path") or value.get("file_path") or value)
+    return str(value)
+
+
 def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None = None) -> list[str]:
     if tool_name in VARIABLE_CREATE_TOOLS:
         # These calls often carry only `pageName` (no path/file_path key at all --
@@ -289,9 +300,9 @@ def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None =
             if value is None:
                 continue
             if isinstance(value, list):
-                paths.extend(str(v) for v in value)
+                paths.extend(_coerce_path(v) for v in value)
             else:
-                paths.append(str(value))
+                paths.append(_coerce_path(value))
         if paths:
             return paths
 
@@ -310,9 +321,9 @@ def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None =
         or []
     )
     if isinstance(files, list):
-        paths.extend(str(path) for path in files)
+        paths.extend(_coerce_path(path) for path in files)
     elif files:
-        paths.append(str(files))
+        paths.append(_coerce_path(files))
     change = tool_input.get("change")
     if isinstance(change, str):
         match = re.search(r"([\w./-]+\.(?:html|json|js|css|xml))", change)
