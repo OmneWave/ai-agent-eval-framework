@@ -151,6 +151,10 @@ _TEMPLATE = """<!DOCTYPE html>
      `.ok`) gets green. */
   .violation-item { font-size: 12px; color: var(--red); padding: 2px 0; line-height: 1.5; }
   .violation-item.ok { color: var(--green); }
+  /* trace_health's findings are warnings, not scored failures (it carries no
+     weight in overall_score) -- yellow keeps that distinct from a real red
+     failure elsewhere in the report. */
+  .violation-item.warn { color: var(--yellow); }
   .check-detail-toggle { margin-top: 2px; }
   .check-detail-toggle summary { cursor: pointer; color: var(--muted); font-size: 11px; }
   .check-detail-toggle summary:hover { color: var(--text); }
@@ -232,7 +236,7 @@ _TEMPLATE = """<!DOCTYPE html>
     const REPORT = JSON.parse(document.getElementById('comparison-data').textContent);
     const PLUGIN_NAMES = [...new Set(
       REPORT.rows.flatMap(r => (r.plugin_scores || []).map(p => p.plugin))
-    )];
+    )].filter(p => p !== 'trace_health');
     let sortKey = null;
     let sortDir = 1;
     const state = { name: '', model: '', contract: '', user: '', status: '', search: '' };
@@ -266,6 +270,49 @@ _TEMPLATE = """<!DOCTYPE html>
       if (!pluginScore) return '';
       if (!pluginScore.passed) return 'red';
       return pluginScore.score < 1.0 ? 'yellow' : 'green';
+    }
+
+    // trace_health has no graded score (see registry.PLUGIN_WEIGHTS) -- its
+    // findings are warnings, not scored failures, so they render in the
+    // warn (yellow) color rather than the red used for every other plugin's
+    // failed checks. Used by the expanded trace detail (detailRowHtml).
+    function traceHealthIssuesHtml(p) {
+      const checkLabels = new Set((p.checks || []).map(c => c.label));
+      const timeCheck = (p.checks || []).find(c => c.label.endsWith(' time'));
+      const checkItems = (p.checks || [])
+        .filter(c => c !== timeCheck)
+        .map(c => {
+          const items = c.detail_items || [];
+          const itemsHtml = items.length
+            ? `<details class="check-detail-toggle"><summary>${items.length} detail(s)</summary>`
+              + items.map(d => `<div class="check-detail-line">${esc(d)}</div>`).join('')
+              + `</details>`
+            : '';
+          return `
+        <div class="violation-item ${c.passed ? 'ok' : 'warn'}">${c.passed ? '✓' : '⚠'} <strong>${esc(c.label)}</strong>${c.detail ? ': ' + esc(c.detail) : ''}${itemsHtml}</div>
+      `;
+        }).join('');
+      const violationItems = (p.violations || [])
+        .filter(v => !(v.resource && checkLabels.has(v.resource)))
+        .map(v => `
+        <div class="violation-item warn">⚠ <strong>${esc(v.code)}</strong>: ${esc(v.message)}</div>
+      `).join('');
+      const noDetailFallback = !p.passed && !checkItems && !violationItems
+        ? '<div class="violation-item warn">No details captured.</div>'
+        : '';
+      return (checkItems || violationItems || noDetailFallback)
+        ? `<div class="plugin-violations">${checkItems}${violationItems}${noDetailFallback}</div>`
+        : '<div class="violation-item ok">No issues detected.</div>';
+    }
+
+    // trace_health is a health signal, not a graded plugin -- it reads better
+    // as the last entry in any plugin list/row of dots rather than wherever
+    // DEFAULT_PLUGINS happens to place it, so both pluginSummaryHtml and
+    // detailRowHtml order through this before rendering.
+    function orderPluginsTraceHealthLast(scores) {
+      const rest = scores.filter(p => p.plugin !== 'trace_health');
+      const traceHealth = scores.filter(p => p.plugin === 'trace_health');
+      return [...rest, ...traceHealth];
     }
 
     // --- Shared-context promotion: a field that's identical across every row
@@ -489,7 +536,7 @@ _TEMPLATE = """<!DOCTYPE html>
       if (!scores.length) return '<span class="muted">—</span>';
       const passCount = scores.filter(p => p.passed).length;
       const tier = passCount === scores.length ? 'green' : (passCount === 0 ? 'red' : 'yellow');
-      const dots = scores.map(p => {
+      const dots = orderPluginsTraceHealthLast(scores).map(p => {
         const tierClass = pluginTierClass(p);
         const title = `${esc(p.plugin)}: ${fmtScore(p.score)} (${p.passed ? 'PASS' : 'FAIL'})`;
         return `<span class="plugin-dot ${tierClass}" title="${title}"></span>`;
@@ -524,7 +571,32 @@ _TEMPLATE = """<!DOCTYPE html>
     }
 
     function detailRowHtml(row) {
-      const pluginsHtml = (row.plugin_scores || []).map(p => {
+      const pluginsHtml = orderPluginsTraceHealthLast(row.plugin_scores || []).map(p => {
+        const nameHtml = `<span>${p.passed ? '✅' : '❌'} ${esc(p.plugin)}</span>`;
+        // The one informational "<something> time" check (input gathering,
+        // output generation, tool call, or error time -- see plugins/timing.py)
+        // is shown beside the score badge instead of in the checklist below,
+        // so time-taken reads right next to the percentage it happened during.
+        const timeCheck = (p.checks || []).find(c => c.label.endsWith(' time'));
+        const timeHtml = timeCheck
+          ? `<span class="plugin-time" title="${esc(timeCheck.label)}">${esc(timeCheck.detail)}</span>`
+          : '';
+
+        // trace_health has no score (see traceHealthIssuesHtml/registry
+        // PLUGIN_WEIGHTS) -- so here it just always shows its issues, no
+        // separate toggle, no score badge.
+        if (p.plugin === 'trace_health') {
+          return `
+          <div class="plugin-block">
+            <div class="plugin-line">
+              ${nameHtml}
+              ${timeHtml ? `<span class="plugin-line-right">${timeHtml}</span>` : ''}
+            </div>
+            ${traceHealthIssuesHtml(p)}
+          </div>
+        `;
+        }
+
         const tier = pluginTierClass(p);
         // Plugins that evaluate several named things (e.g. input_context's
         // per-resource checks) report each one's outcome in `checks`, pass or
@@ -536,11 +608,6 @@ _TEMPLATE = """<!DOCTYPE html>
         // warning) must still be shown, or a score drop below 100% would have
         // no visible explanation even though every check line is green.
         const checkLabels = new Set((p.checks || []).map(c => c.label));
-        // The one informational "<something> time" check (input gathering,
-        // output generation, tool call, or error time -- see plugins/timing.py)
-        // is shown beside the score badge instead of in the checklist below,
-        // so time-taken reads right next to the percentage it happened during.
-        const timeCheck = (p.checks || []).find(c => c.label.endsWith(' time'));
         const checkItems = (p.checks || [])
           .filter(c => c !== timeCheck)
           .map(c => {
@@ -570,13 +637,10 @@ _TEMPLATE = """<!DOCTYPE html>
         const detailBlock = (checkItems || violationItems || noDetailFallback)
           ? `<div class="plugin-violations">${checkItems}${violationItems}${noDetailFallback}</div>`
           : '';
-        const timeHtml = timeCheck
-          ? `<span class="plugin-time" title="${esc(timeCheck.label)}">${esc(timeCheck.detail)}</span>`
-          : '';
         return `
           <div class="plugin-block">
             <div class="plugin-line">
-              <span>${p.passed ? '✅' : '❌'} ${esc(p.plugin)}</span>
+              ${nameHtml}
               <span class="plugin-line-right">${timeHtml}<span class="badge ${tier}">${fmtScore(p.score)}</span></span>
             </div>
             ${detailBlock}

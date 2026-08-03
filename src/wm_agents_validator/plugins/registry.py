@@ -21,11 +21,10 @@ DEFAULT_PLUGINS = [
 # populates evidence but never affects `overall_score`, since it's purely
 # observational (see the Scoring section of the contract schema).
 PLUGIN_WEIGHTS: dict[str, float] = {
-    "skills_loaded": 0.15,
-    "tool_calls": 0.15,
+    "skills_loaded": 0.25,
+    "tool_calls": 0.25,
     "input_context": 0.25,
     "output": 0.25,
-    "trace_health": 0.20,
 }
 
 _PLUGIN_CLASSES: dict[str, type] = {
