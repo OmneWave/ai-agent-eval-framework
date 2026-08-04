@@ -137,6 +137,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "for it either). Applied after fetching, on top of whichever trace-selection mode you used.",
     )
     parser.add_argument("--out", required=True, help="Output HTML file path")
+    parser.add_argument(
+        "--data-dir",
+        default="data",
+        help="Directory to archive the raw ComparisonReport JSON in before rendering the "
+        "HTML report (default: 'data'). Created if it doesn't exist. One JSON file is "
+        "written per run, named after --out's stem plus the report's generated_at timestamp.",
+    )
     parser.add_argument("--retries", type=int, default=12)
     parser.add_argument("--delay", type=float, default=1.0)
     add_langfuse_args(parser)
@@ -229,6 +236,22 @@ def _resolve_contract_filter_groups(contracts: list[str]) -> list[tuple[str, lis
             f"-- missing an embedded filter on: {missing_embedded}"
         )
     return [(path, filters) for path, _ids, filters in parsed]
+
+
+def _archive_report_json(report, out_path: str, data_dir: str) -> Path:
+    """Writes the raw `ComparisonReport` JSON to `data_dir` before rendering.
+
+    Kept as its own step (not just relying on the HTML's embedded blob) so the
+    underlying data survives independent of the report's HTML/JS -- e.g. for
+    reuse by `merge_html_reports`, other renderers, or diffing runs over time.
+    """
+    directory = Path(data_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    safe_timestamp = report.generated_at.replace(":", "").replace("+", "_")
+    filename = f"{Path(out_path).stem}_{safe_timestamp}.json"
+    data_path = directory / filename
+    data_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    return data_path
 
 
 def main() -> None:
@@ -373,6 +396,9 @@ def main() -> None:
     if not report.rows:
         print("No traces found for the given selection.")
         sys.exit(1)
+
+    data_path = _archive_report_json(report, args.out, args.data_dir)
+    print(f"Report data archived to {data_path}")
 
     html = HtmlComparisonRenderer().render(report)
     Path(args.out).write_text(html, encoding="utf-8")
