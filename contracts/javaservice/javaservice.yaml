@@ -1,0 +1,130 @@
+workflow: wm_agent_query_contract
+contract_version: 1.0.0
+skills:
+  required:
+    - create-java-service
+  optional:
+    - update-java-service
+    - variables
+    - custom-code
+    - actions
+    - pageParams
+    - explore-api
+    - explore-codebase
+knowledge: []
+resources:
+  api: []
+  javaservice:
+    - name: WeavrOnboardingService
+      path: services/onboardingservice/src/com/wavemaker/javaservicetest/onboardingservice/OnboardingService.java
+    - name: CustomerResponse
+      path: services/onboardingservice/src/com/wavemaker/javaservicetest/onboardingservice/model/CustomerResponse.java
+    - name: OnboardingRequest
+      path: services/onboardingservice/src/com/wavemaker/javaservicetest/onboardingservice/model/OnboardingRequest.java
+    - name: ManagedAccountsService
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/service/ManagedAccountsService.java
+    - name: ManagedCardsService
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/service/ManagedCardsService.java
+    - name: ConsumersService
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/service/ConsumersService.java
+    - name: Address
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/Address.java
+    - name: AddressWithCountryRequired
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/AddressWithCountryRequired.java
+    - name: BillingAddress
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/BillingAddress.java
+    - name: Consumer
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/Consumer.java
+    - name: ConsumerCreateRequest
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/ConsumerCreateRequest.java
+    - name: ConsumerCreateRequestRootUser
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/ConsumerCreateRequestRootUser.java
+    - name: WeavrDate
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/Date.java
+    - name: IdentityId
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/IdentityId.java
+    - name: ManagedAccount
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/ManagedAccount.java
+    - name: ManagedAccountCreateRequest
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/ManagedAccountCreateRequest.java
+    - name: ManagedCard
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/ManagedCard.java
+    - name: ManagedCardRequest
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/ManagedCardRequest.java
+    - name: Mobile
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/model/Mobile.java
+    - name: WeavrSpringConfig
+      path: services/weavr/src/service_weavr.spring.xml
+    - name: AccessService
+      path: services/weavr/src/com/wavemaker/javaservicetest/weavr/service/AccessService.java
+    - name: OnboardingServiceInfo
+      path: services/onboardingservice/designtime/service-info.json
+    - name: WeavrServiceInfo
+      path: services/weavr/designtime/service-info.json
+    - name: WeavrConnectionSettings
+      path: services/weavr/designtime/weavr_connection_settings.json
+    - name: WeavrApiTargetDesigntime
+      path: services/weavr/designtime/weavr_apiTarget.json
+    - name: WeavrApiTargetSrc
+      path: services/weavr/src/weavr_apiTarget.json
+  db: []
+  design_tokens: []
+  page: []
+  project:
+    - name: PomXml
+      path: pom.xml
+    - name: ProjectUserSpringXml
+      path: src/main/webapp/WEB-INF/project-user-spring.xml
+input_context:
+  - resource: javaservice.ManagedAccountsService
+  - resource: javaservice.ManagedCardsService
+  - resource: javaservice.ConsumersService
+  - resource: javaservice.AddressWithCountryRequired
+  - resource: javaservice.Consumer
+  - resource: javaservice.ConsumerCreateRequest
+  - resource: javaservice.ConsumerCreateRequestRootUser
+  - resource: javaservice.WeavrDate
+  - resource: javaservice.IdentityId
+  - resource: javaservice.ManagedAccount
+  - resource: javaservice.ManagedAccountCreateRequest
+  - resource: javaservice.ManagedCard
+  - resource: javaservice.ManagedCardRequest
+  - resource: javaservice.Mobile
+  - resource: javaservice.WeavrSpringConfig
+  - resource: javaservice.AccessService
+  - resource: javaservice.OnboardingServiceInfo
+  - resource: javaservice.WeavrServiceInfo
+  - resource: javaservice.WeavrConnectionSettings
+  - resource: javaservice.WeavrApiTargetDesigntime
+  - resource: javaservice.WeavrApiTargetSrc
+  - resource: project.PomXml
+  - resource: project.ProjectUserSpringXml
+output:
+  - resource: javaservice.WeavrOnboardingService
+    operation: CREATE
+  - resource: javaservice.CustomerResponse
+    operation: CREATE
+  - resource: javaservice.OnboardingRequest
+    operation: CREATE
+tools:
+  required:
+    - platform_createNewJavaService
+    - platform_compile
+    - read_files
+    - find_files_by_glob
+  optional:
+    - edit_file_content
+    - platform_describeAppServiceVariables
+    - platform_describePageServiceVariables
+    - platform_getDefinitionInformation
+    - platform_getServiceDetails
+    - platform_listAppVariables
+    - platform_listPageVariables
+    - ui_createApiAwareVariable
+    - ui_createNonApiAwareVariable
+    - ui_getPageParams
+    - ui_getVariableInputsAndOutputs
+    - ui_setPageParams
+    - ui_updateVariable
+    - write_file
+  forbidden: []

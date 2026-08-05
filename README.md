@@ -220,7 +220,7 @@ skills:
 knowledge: [string]                 # proprietary/catalog reference paths -- always fine to read,
                                      # never required, never penalized either way
 
-resources:                          # named registry -- pure identity (name + optional path override)
+resources:                          # named registry -- pure identity (name + required path), any type name
   api: [{name: string, path: string}]
   javaservice: [{name: string, path: string}]
   db: [{name: string, path: string}]
@@ -228,17 +228,17 @@ resources:                          # named registry -- pure identity (name + op
   page:
     - name: string
       path: string
-      variable: [{name: string, path: string}]
+      variable: [{name: string, path: string}]    # nested -- any type name, any depth
       widget: [{name: string, path: string}]
       javascript: [{name: string, path: string}]
+  # ...or any other type name, nested or not, a contract needs
 
 input_context:                      # every entry means "must be READ somewhere in the trace"
   - resource: string                  # dotted reference, e.g. "api.hrdb" or "api.hrdb.VacationController_getVacation"
     terms: [string]                     # extra ids/keywords that must appear in some tool call's input/output
 
 output:                             # every entry means "must be CREATED/UPDATED/DELETED"
-  - resource: string                  # identity-constrained (exact name) or policy-constrained
-                                       # (page.<page>.<subtype>, no name) -- see CONTRACT_SPEC.md
+  - resource: string                  # dotted "<type>.<name>" reference -- see CONTRACT_SPEC.md
     operation: CREATE | UPDATE | DELETE
     match: {field: value} | [value]     # optional, default {} -- exact-match evidence assertion
                                          # against the same call that created/updated the resource
@@ -254,26 +254,29 @@ platform's real resource catalog (a service id, a page name, a variable/widget/j
 never an alias made up by whoever writes the contract, so two people referencing the same resource
 always write the identical entry.
 
-**Paths are derived, not typed, by default.** `path` is optional on every registry entry — when
-omitted, it's computed from the resource's type + name (+ page name, for page-scoped types) via a
-fixed convention built from the real AI Agent Harness project layout:
+**There's no fixed type vocabulary, no path convention, and nesting works at any depth for any
+type.** A contract can register any type name it needs under `resources:` — `api`,
+`javaservice`, `db`, `design_tokens`, `page`, `variable`, `widget`, `javascript` are the
+conventional names already in use, but nothing stops a contract from introducing a new one, and
+any entry can carry its own further nested type(s) the same way `page` nests `variable`/
+`widget`/`javascript` above. Every entry's `path` must be given explicitly, at every nesting
+level — there's no derivation from name/type to fall back on, by design (a resource type
+introduced today has no historical convention to guess at). Typical paths:
 
-| Type | Convention |
+| Type | Typical path |
 |---|---|
-| `api` | `services/{name}/designtime/{name}_API.json` — default only; `RestService`/`OpenAPIService` needs `_API_REST_SERVICE.json`, `WebSocketService` needs `_API_WEBSOCKET_SERVICE.json` (explicit `path:` override required for both — see [docs/CONTRACT_SPEC.md](docs/CONTRACT_SPEC.md)) |
-| `javaservice` | `services/{name}/designtime/{name}_API.json` |
+| `api` | `services/{name}/designtime/{name}_API.json` (or `_API_REST_SERVICE.json`/`_API_WEBSOCKET_SERVICE.json`, `_apiTarget.json`, depending on how the API was imported) |
+| `javaservice` | `services/{name}/designtime/{name}_API.json`, or the real `.java` source path for that class |
 | `db` | `services/{name}/designtime/{name}_published_dataModel.json` |
 | `design_tokens` | `src/main/webapp/pages/{name}/{name}.tokens-plan.json` |
 | `page` | `src/main/webapp/pages/{name}/{name}.html` |
-| `page.*.variable` | `src/main/webapp/pages/{page}/{page}.variables.json` |
-| `page.*.widget` | same file as the page itself (widgets are markup inside it) |
-| `page.*.javascript` | `src/main/webapp/pages/{page}/{page}.js` |
-
-An explicit `path:` overrides this — needed for anything off-convention, like `javaservice`'s real
-Java source (package-path, not name-only) or a custom query/procedure/token-override file.
+| `page.*.variable` (nested) | `src/main/webapp/pages/{page}/{page}.variables.json` |
+| `page.*.widget` (nested) | same file as the page itself (widgets are markup inside it) |
+| `page.*.javascript` (nested) | `src/main/webapp/pages/{page}/{page}.js` |
 
 **References carry qualifiers.** `input_context[].resource` / `output[].resource` are dotted
-strings resolved against `resources`. Any segments left over *after* the registry lookup succeeds
+strings resolved against `resources`, descending through any nested `<subtype>.<subname>`
+pairs as deep as the registry actually nests. Any segments left over *after* resolution succeeds
 become qualifier terms, checked exactly like a `terms` entry (substring match in a tool call's
 input or output, anywhere in the trace) — this is what lets `api.hrdb.VacationController_getVacation`
 assert both "the hrdb API file was read" *and* "that specific operation showed up somewhere",

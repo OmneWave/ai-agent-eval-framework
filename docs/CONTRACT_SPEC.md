@@ -64,7 +64,12 @@ scope-creep check. Not resource-backed — just raw path strings, no `name`/`pat
 
 ## Resources
 
-The registry: a set of **named** resource entries, grouped by a fixed, closed set of types.
+The registry: a set of **named** resource entries, grouped under type keys that are
+completely open-ended — `api`, `javaservice`, `db`, `design_tokens`, `page`, `variable`,
+`widget`, `javascript`, or any new type name a contract needs. There's no fixed list of
+types, and any entry can itself nest further typed sub-lists the same way (e.g. a `page`
+entry carrying its own `variable`/`widget`/`javascript` sub-lists) — nesting isn't limited to
+`page`, or to one level deep; it works the same way at every level, for any type name.
 Every entry's `name` must be the resource's real identity from the platform's catalog (a
 service id, a page name, a variable/widget/javascript name) — **never an alias invented by
 whoever writes the contract**. Two different contract authors referencing the same real
@@ -74,47 +79,47 @@ resource must always write the identical entry.
 
 ```yaml
 resources:
-  api:            [{name: string, path: string}]   # flat type
-  javaservice:    [{name: string, path: string}]   # flat type
-  db:             [{name: string, path: string}]   # flat type
-  design_tokens:  [{name: string, path: string}]   # flat type
+  api:           [{name: string, path: string}]
+  javaservice:   [{name: string, path: string}]
+  db:            [{name: string, path: string}]
+  design_tokens: [{name: string, path: string}]
   page:
     - name: string
       path: string
-      variable:   [{name: string, path: string}]   # page-scoped
-      widget:     [{name: string, path: string}]   # page-scoped
-      javascript: [{name: string, path: string}]   # page-scoped
+      variable:   [{name: string, path: string}]   # nested -- any type name works here too
+      widget:     [{name: string, path: string}]
+      javascript: [{name: string, path: string}]
+  # ...or any other type name, nested to any depth, a contract needs
 ```
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | `string` | yes, **if the entry exists** | The resource's real catalog identity. |
-| `path` | `string` | no | Explicit file path override. **If omitted, derived automatically** from type + `name` (+ page name, for page-scoped types) via the convention table below. |
+| `name` | `string` | yes | The resource's real catalog identity. |
+| `path` | `string` | yes | The file this resource lives at. There's no built-in path convention for any type, at any nesting depth — `path` must always be given explicitly. |
+| *(any other key)* | `[{name, path, ...}]` | no | A further nested resource type scoped under this entry — same shape, recursively. |
 
-**The entry itself is optional for page-scoped subtypes (`variable`/`widget`/`javascript`).**
-`name` is only required *if you write an entry at all* — for `variable`/`widget`/`javascript`,
-writing one is now itself optional: skip it entirely and reference `page.<page>.<subtype>` (no
-name) from `input_context`/`output` to get the policy-constrained form (see
-["Identity-constrained vs. policy-constrained references"](#identity-constrained-vs-policy-constrained-references)).
-Only write an entry — with its required `name` — when the task dictates an exact resource name.
-Flat types (`api`, `javaservice`, `db`, `design_tokens`) and the `page` entry itself are
-unaffected by this — an entry (and its `name`) is still always required for those.
+A reference used in `input_context`/`output` (e.g. `api.hrdb`) only resolves if that type +
+name is actually registered under `resources:` — referencing an unregistered type, name, or
+nested subtype is a hard failure (`KeyError` at contract-load/evaluation time), not silently
+ignored.
 
-### Fixed resource types
+### Resource types
 
-There are exactly five keys under `resources`. No other type exists — this is the entire
-closed vocabulary.
+Every type name works the same way — there's no structural distinction between `page` and
+any other type. `api`, `javaservice`, `db`, `design_tokens`, `page`, `variable`, `widget`,
+`javascript` are the conventional names already in use across contracts, but a contract can
+introduce any other type name it needs, nested or not.
 
-| Type | Level | Nested under | Auto-derived path convention | Example |
-|---|---|---|---|---|
-| `api` | flat | — | `services/{name}/designtime/{name}_API.json` — matches `JavaService`/`SoapService`/`DataService`/`SecurityService`-typed services only (per wm-agent-server's `skills/common/ui/explore-api.md`). A `RestService`/`OpenAPIService`-imported API (e.g. Swagger) needs `_API_REST_SERVICE.json` instead, and a `WebSocketService` needs `_API_WEBSOCKET_SERVICE.json` — both require an explicit `path:` override; the convention only covers the default case. | `services/hrdb/designtime/hrdb_API.json` (DataService default) — see the full example below for a REST-service override (`api.petstore`) |
-| `javaservice` | flat | — | `services/{name}/designtime/{name}_API.json` | `services/MyJavaService/designtime/MyJavaService_API.json`. The real `.java` source needs an explicit `path:` — its package-path layout isn't derivable from `name` alone. |
-| `db` | flat | — | `services/{name}/designtime/{name}_published_dataModel.json` | `services/hrdb/designtime/hrdb_published_dataModel.json` |
-| `design_tokens` | flat | — | `src/main/webapp/pages/{name}/{name}.tokens-plan.json` | `src/main/webapp/pages/CreateProduct/CreateProduct.tokens-plan.json`. `name` here is the page it belongs to (there's no page-nesting for this type). Token-override files under `design-tokens/overrides/**` need an explicit `path:`. |
-| `page` | container | — | `src/main/webapp/pages/{name}/{name}.html` | `src/main/webapp/pages/Main/Main.html` |
-| `page.*.variable` | page-scoped | a `page` entry | `src/main/webapp/pages/{page}/{page}.variables.json` | `.../Main/Main.variables.json` |
-| `page.*.widget` | page-scoped | a `page` entry | same file as the page itself (widgets are markup inside it, not separate files) | — |
-| `page.*.javascript` | page-scoped | a `page` entry | `src/main/webapp/pages/{page}/{page}.js` | `.../Main/Main.js` |
+| Type | Typical example |
+|---|---|
+| `api` | `services/hrdb/designtime/hrdb_API.json` |
+| `javaservice` | `services/MyJavaService/src/.../MyJavaService.java` |
+| `db` | `services/hrdb/designtime/hrdb_published_dataModel.json` |
+| `design_tokens` | `src/main/webapp/pages/CreateProduct/CreateProduct.tokens-plan.json` |
+| `page` | `src/main/webapp/pages/Main/Main.html` |
+| `page.*.variable` (nested) | `src/main/webapp/pages/Main/Main.variables.json` |
+| `page.*.widget` (nested) | `src/main/webapp/pages/Main/Main.html` (widgets are markup inside the page file, not separate files) |
+| `page.*.javascript` (nested) | `src/main/webapp/pages/Main/Main.js` |
 
 A fragment that produces its **own** file (like `createProductHeader.html`) is its own `page`
 entry, not nested inside another page. A layout-plan or token-override file that's purely a
@@ -123,38 +128,16 @@ structural/style plan for one page goes under `design_tokens` with that page's n
 ### Reference syntax and qualifiers
 
 Everywhere a resource is used (`input_context[].resource`, `output[].resource`), it's a
-dotted string resolved against the registry:
+dotted string resolved against the registry as `<type>.<name>`, optionally followed by any
+number of `<subtype>.<subname>` pairs descending into nested resources — e.g. `api.hrdb`,
+`page.Main`, `page.Main.variable.mainVariable`. Resolution walks as deep as the registry
+actually nests: each pair is tried against the current entry's own nested lists, and the
+first pair that doesn't name a real nested type stops the descent.
 
-| Reference shape | Resolves to |
-|---|---|
-| `<type>.<name>` | a flat-type entry, e.g. `api.hrdb` |
-| `page.<page_name>` | a page's own file, e.g. `page.Main` |
-| `page.<page_name>.<widget\|variable\|javascript>.<name>` | a page-scoped entry, e.g. `page.Main.variable.mainVariable` |
-| `page.<page_name>.<widget\|variable\|javascript>` (no `<name>`) | the same convention path, no registry entry required — see "Identity-constrained vs. policy-constrained references" below |
-
-#### Identity-constrained vs. policy-constrained references
-
-Every page-scoped reference above (4 parts, with a `<name>`) is **identity-constrained**: the
-resource must have a specific, pre-registered name, and the trace must have created/touched
-exactly that name. Use this when the task's prompt (or the surrounding spec) actually dictates
-what the resource must be called — e.g. binding a specific existing widget.
-
-Dropping the trailing `<name>` segment (3 parts, e.g. `page.PetTable.variable`) makes the
-reference **policy-constrained**: it resolves to the same convention path, but requires no
-pre-registered entry and doesn't care what the model names the thing it creates. Use this when
-the task legitimately gives the model free choice over naming (e.g. "bind list1 to the
-findByTags operation" doesn't say what the resulting variable should be called) — pair it with
-a `match` clause (see [output](#output)) to still verify the resource has the right *properties*,
-just not a specific name.
-
-**Constraint**: a policy-constrained reference always resolves to the convention path — it has
-no registry entry to read a per-entry `path:` override from. If a page-scoped subtype ever needs
-a non-convention path, reference it by name (identity-constrained form) instead.
-
-**Generic qualifier rule**: any reference segments left over *after* the registry lookup
-succeeds become **qualifier terms**, checked exactly like a `terms` entry (substring match
-against any tool call's input or output, anywhere in the trace). This one rule replaces what
-would otherwise need type-specific fields (`operationId`, `class`+`method`,
+**Generic qualifier rule**: any reference segments left over *after* resolution succeeds
+become **qualifier terms**, checked exactly like a `terms` entry (substring match against any
+tool call's input or output, anywhere in the trace). This one rule replaces what would
+otherwise need type-specific fields (`operationId`, `class`+`method`,
 `table_name`+`column_name`):
 
 | Reference | Resolved path | Qualifier terms |
@@ -168,6 +151,12 @@ would otherwise need type-specific fields (`operationId`, `class`+`method`,
 Qualifiers work identically whether the reference appears under `input_context` or `output`
 — an `output`-side qualifier is checked by the `input_context` plugin's term logic, since
 `output` itself has no content-relevance check of its own.
+
+If a task legitimately gives the model free choice over naming (e.g. "bind list1 to the
+findByTags operation" doesn't say what the resulting variable should be called), there's no
+way to reference the not-yet-named resource directly — register it under whatever name the
+trace actually used once observed, or rely on a `match` clause (see [output](#output)) against
+a resource referenced by its type alone at a broader granularity instead.
 
 A dangling reference (unknown type, unknown name at any level, malformed dotted string)
 raises a `ValueError` naming the contract file and the bad reference **at load time**
@@ -405,7 +394,9 @@ resources:
   page:
     - name: PetTable
       path: src/main/webapp/pages/PetTable/PetTable.html
-      # no `variable:` entry needed -- output below references it policy-first
+      variable:
+        - name: findPetsByTagsVariable
+          path: src/main/webapp/pages/PetTable/PetTable.variables.json
       widget:
         - name: swagger_findPetsByTagsTable1
           path: src/main/webapp/pages/PetTable/PetTable.html
@@ -414,11 +405,11 @@ input_context:
   - resource: api.petstore.petstore_findPetsByTags
 
 output:
-  - resource: page.PetTable.variable          # policy-constrained: the model may name this anything
+  - resource: page.PetTable.variable.findPetsByTagsVariable
     operation: CREATE
     match:
       operationId: petstore_findPetsByTags
-  - resource: page.PetTable.widget.swagger_findPetsByTagsTable1   # identity-constrained: name is dictated
+  - resource: page.PetTable.widget.swagger_findPetsByTagsTable1
     operation: UPDATE
 
 tools:
