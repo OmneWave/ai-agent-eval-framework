@@ -2,123 +2,96 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-
-# NOTE on "api": the default suffix (`_API.json`) matches JavaService/SoapService/
-# DataService/SecurityService-typed services (per wm-agent-server's
-# skills/common/ui/explore-api.md). A RestService/OpenAPIService-imported API (e.g. a
-# Swagger import) uses `_API_REST_SERVICE.json` instead, and a WebSocketService uses
-# `_API_WEBSOCKET_SERVICE.json` -- both need an explicit `path:` override on that
-# registry entry, same as javaservice's real .java source below.
-_PATH_CONVENTIONS = {
-    "api": "services/{name}/designtime/{name}_API.json",
-    "javaservice": "services/{name}/designtime/{name}_API.json",
-    "db": "services/{name}/designtime/{name}_published_dataModel.json",
-    "design_tokens": "src/main/webapp/pages/{name}/{name}.tokens-plan.json",
-    "page": "src/main/webapp/pages/{name}/{name}.html",
-    "variable": "src/main/webapp/pages/{page}/{page}.variables.json",
-    "widget": "src/main/webapp/pages/{page}/{page}.html",
-    "javascript": "src/main/webapp/pages/{page}/{page}.js",
-}
-
-_FLAT_TYPES = ("api", "javaservice", "db", "design_tokens")
-_PAGE_SUBTYPES = ("variable", "widget", "javascript")
-
-
-def _default_path(type_: str, name: str, page: str | None = None) -> str:
-    return _PATH_CONVENTIONS[type_].format(name=name, page=page)
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ResourceEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """A single named resource -- identity (``name``) + location (``path``).
+
+    Any other field written on an entry is treated as a further nested resource type
+    scoped under it (e.g. a ``page`` entry can carry its own ``variable``/``widget``/
+    ``javascript`` sub-lists) -- nesting works the same way at every level, recursively,
+    for any type name, not just a fixed set. See ``ResourceRegistry.resolve()``.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     name: str
-    path: str | None = None
+    path: str
 
-
-class PageEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    path: str | None = None
-    variable: list[ResourceEntry] = Field(default_factory=list)
-    widget: list[ResourceEntry] = Field(default_factory=list)
-    javascript: list[ResourceEntry] = Field(default_factory=list)
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nested_resource_lists(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for key, value in data.items():
+            if key in ("name", "path"):
+                continue
+            data[key] = [entry if isinstance(entry, ResourceEntry) else ResourceEntry.model_validate(entry) for entry in value]
+        return data
 
 
 class ResourceRegistry(BaseModel):
-    """Named registry of real resources -- pure identity (name + optional path override).
+    """Named registry of real resources -- pure identity (name + explicit path).
 
     Every entry's ``name`` is copied verbatim from the platform's resource catalog, never
-    invented by a contract author. ``path`` is derived from type + name (+ page name, for
-    page-scoped types) via ``_PATH_CONVENTIONS`` when not explicitly given.
+    invented by a contract author. There's no fixed set of resource types -- a contract
+    registers whatever type name it needs (``api``, ``page``, ``variable``, or something
+    new) as ``resources.<type>: [{name, path}]``, and any entry can itself nest further
+    typed sub-lists the same way (see ``ResourceEntry``). There's no built-in path
+    convention either, so every entry -- at any nesting depth -- needs an explicit
+    ``path``. A reference used in ``input_context``/``output`` must resolve against an
+    entry actually registered here -- see ``resolve()``.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
-    api: list[ResourceEntry] = Field(default_factory=list)
-    javaservice: list[ResourceEntry] = Field(default_factory=list)
-    db: list[ResourceEntry] = Field(default_factory=list)
-    design_tokens: list[ResourceEntry] = Field(default_factory=list)
-    page: list[PageEntry] = Field(default_factory=list)
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_resource_lists(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        return {
+            key: [entry if isinstance(entry, ResourceEntry) else ResourceEntry.model_validate(entry) for entry in value]
+            for key, value in data.items()
+        }
 
     def resolve(self, ref: str) -> tuple[str, list[str]]:
-        """Resolve a dotted reference to (effective_path, qualifier_terms).
+        """Resolve a dotted ``<type>.<name>[.<subtype>.<subname>...][.<qualifier>...]``
+        reference to (effective_path, qualifier_terms).
 
-        Any reference segments left over after the registry lookup succeeds become
-        qualifier terms, checked like a ``terms`` entry -- see the "References and
-        qualifiers" section of the contract schema.
-
-        A page-scoped reference may omit the final name segment (``page.<page>.<subtype>``,
-        e.g. ``page.PetTable.variable``) -- this is the policy-constrained form: it resolves
-        to the same convention path as any name-qualified entry of that subtype, without
-        requiring a specific ``name`` to be pre-registered. Use this (paired with a
-        ``WriteSpec.match`` clause) when a task doesn't dictate what the model should call
-        the resource it creates.
+        After the top-level ``<type>.<name>`` lookup succeeds, each further pair of
+        segments is tried as a nested ``<subtype>.<subname>`` descent into the current
+        entry (see ``ResourceEntry``) -- as deep as the registry actually nests. The
+        first pair that doesn't name a real nested type stops the descent; everything
+        from there on becomes qualifier terms, checked like a ``terms`` entry -- see the
+        "References and qualifiers" section of the contract schema.
         """
         parts = ref.split(".")
-        if not parts or not parts[0]:
+        if len(parts) < 2 or not parts[0]:
             raise KeyError(f"malformed resource reference '{ref}'")
-        type_ = parts[0]
+        type_, name = parts[0], parts[1]
+        bucket = getattr(self, type_, None)
+        if bucket is None:
+            raise KeyError(f"resource '{ref}' not found: no '{type_}' resources registered")
+        entry = next((e for e in bucket if e.name == name), None)
+        if entry is None:
+            raise KeyError(f"resource '{ref}' not found in {type_}")
 
-        if type_ == "page":
-            if len(parts) < 2:
-                raise KeyError(f"malformed resource reference '{ref}'")
-            page = next((p for p in self.page if p.name == parts[1]), None)
-            if page is None:
-                raise KeyError(f"resource '{ref}' not found: no page named '{parts[1]}'")
-            if len(parts) == 2:
-                return page.path or _default_path("page", page.name), []
-            if len(parts) == 3:
-                # Policy-constrained reference (no name segment) -- resolves to the
-                # same convention path as any name-qualified entry of this subtype,
-                # with no registry entry required. Only ever the convention path: a
-                # per-entry `path:` override can't apply since there's no entry to
-                # read it from -- if a page-scoped subtype ever needs an override
-                # path, it must be referenced by name (4-part form) instead.
-                if parts[2] not in _PAGE_SUBTYPES:
-                    raise KeyError(f"malformed page resource reference '{ref}'")
-                return _default_path(parts[2], "", page=page.name), []
-            if len(parts) < 4 or parts[2] not in _PAGE_SUBTYPES:
-                raise KeyError(f"malformed page resource reference '{ref}'")
-            bucket = getattr(page, parts[2])
-            entry = next((e for e in bucket if e.name == parts[3]), None)
-            if entry is None:
-                raise KeyError(f"resource '{ref}' not found in page.{page.name}.{parts[2]}")
-            path = entry.path or _default_path(parts[2], entry.name, page=page.name)
-            return path, parts[4:]
+        remaining = parts[2:]
+        while len(remaining) >= 2:
+            subtype, subname = remaining[0], remaining[1]
+            sub_bucket = getattr(entry, subtype, None)
+            if not isinstance(sub_bucket, list) or not all(isinstance(e, ResourceEntry) for e in sub_bucket):
+                break
+            sub_entry = next((e for e in sub_bucket if e.name == subname), None)
+            if sub_entry is None:
+                raise KeyError(f"resource '{ref}' not found in {type_}.{name}.{subtype}")
+            entry = sub_entry
+            remaining = remaining[2:]
 
-        if type_ in _FLAT_TYPES:
-            if len(parts) < 2:
-                raise KeyError(f"malformed resource reference '{ref}'")
-            bucket = getattr(self, type_)
-            entry = next((e for e in bucket if e.name == parts[1]), None)
-            if entry is None:
-                raise KeyError(f"resource '{ref}' not found in {type_}")
-            path = entry.path or _default_path(type_, entry.name)
-            return path, parts[2:]
-
-        raise KeyError(f"malformed resource reference '{ref}'")
+        return entry.path, remaining
 
 
 class SkillsSpec(BaseModel):

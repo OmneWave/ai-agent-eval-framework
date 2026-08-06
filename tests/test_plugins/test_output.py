@@ -83,13 +83,12 @@ def test_output_flags_unrelated_file_changed(snapshot, contract):
     assert violation.resource == "unrelated changes"
 
 
-def _nameless_variable_contract(contract, match):
-    # Swap only the variable entry for its policy-constrained (nameless +
-    # match) equivalent -- keep the widget/javascript entries as-is, or the
-    # unrelated-file-changed check would flag their file changes as no
-    # longer declared anywhere in `output`.
-    nameless_variable = WriteSpec(resource="page.PetTable.variable", operation="CREATE", match=match)
-    new_output = [nameless_variable] + [w for w in contract.output if w.resource != _VARIABLE]
+def _variable_contract_with_match(contract, match):
+    # Swap only the variable entry's `match` clause -- keep the widget/javascript
+    # entries as-is, or the unrelated-file-changed check would flag their file
+    # changes as no longer declared anywhere in `output`.
+    updated_variable = WriteSpec(resource=_VARIABLE, operation="CREATE", match=match)
+    new_output = [updated_variable] + [w for w in contract.output if w.resource != _VARIABLE]
     return contract.model_copy(update={"output": new_output})
 
 
@@ -101,7 +100,7 @@ def test_output_match_dict_form_matches_platform_tool_evidence(snapshot, contrac
         if span.id == "span-variable-write":
             span.input = {k: v for k, v in span.input.items() if k != "operationId"}
 
-    policy_contract = _nameless_variable_contract(contract, {"operationId": "petstore_findPetsByTags"})
+    policy_contract = _variable_contract_with_match(contract, {"operationId": "petstore_findPetsByTags"})
     result = OutputPlugin().evaluate(snapshot, policy_contract)
 
     assert result.passed
@@ -109,19 +108,19 @@ def test_output_match_dict_form_matches_platform_tool_evidence(snapshot, contrac
 
 
 def test_output_match_mismatch_reports_new_violation_code(snapshot, contract):
-    policy_contract = _nameless_variable_contract(contract, {"operationId": "petstore_findPetsByOtherThing"})
+    policy_contract = _variable_contract_with_match(contract, {"operationId": "petstore_findPetsByOtherThing"})
     result = OutputPlugin().evaluate(snapshot, policy_contract)
 
     assert not result.passed
     codes = [v.code for v in result.violations]
     assert "output_match_mismatch" in codes
     assert "output_operation_mismatch" not in codes  # operation itself WAS observed
-    assert result.evidence["checks"]["page.PetTable.variable"]["passed"] is False
+    assert result.evidence["checks"][_VARIABLE]["passed"] is False
 
 
 def test_output_match_list_form_matches_value_under_any_field(snapshot, contract):
     # List shape: value must appear under *some* field, without naming operationId.
-    policy_contract = _nameless_variable_contract(contract, ["petstore_findPetsByTags"])
+    policy_contract = _variable_contract_with_match(contract, ["petstore_findPetsByTags"])
     result = OutputPlugin().evaluate(snapshot, policy_contract)
 
     assert result.passed
@@ -153,7 +152,7 @@ def test_output_match_ignores_read_tool_evidence(snapshot, contract):
             success=True,
         )
     )
-    policy_contract = _nameless_variable_contract(contract, {"operationId": "petstore_findPetsByTags"})
+    policy_contract = _variable_contract_with_match(contract, {"operationId": "petstore_findPetsByTags"})
     result = OutputPlugin().evaluate(snapshot, policy_contract)
 
     assert not result.passed
