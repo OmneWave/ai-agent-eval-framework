@@ -240,14 +240,33 @@ input_context:                      # every entry means "must be READ somewhere 
 output:                             # every entry means "must be CREATED/UPDATED/DELETED"
   - resource: string                  # dotted "<type>.<name>" reference -- see CONTRACT_SPEC.md
     operation: CREATE | UPDATE | DELETE
-    match: {field: value} | [value]     # optional, default {} -- exact-match evidence assertion
-                                         # against the same call that created/updated the resource
+    match: [clause, ...]                # optional, default [] -- list of evidence clauses (see below),
+                                         # ALL must hold, checked against the same call that
+                                         # created/updated the resource
+
+  # ToolCheck entry -- an alternative, INDEPENDENT entry kind (input_context or output, either
+  # list): "this exact tool call happened, with this content" -- no resource:/path involved at all.
+  # For a tool that addresses what it acts on by an identifier rather than a literal path.
+  - tool: string                      # e.g. "ui_applyChangesOnPageMarkup" or "execute_tool.ui_applyChangesOnPageMarkup"
+    match: [clause, ...]                # optional, default []
 
 tools:                               # one flat, contract-wide tool policy
   required: [string]
   optional: [string]
   forbidden: [string]
 ```
+
+**`match` is a list of clauses (ALL ANDed), each one of three kinds** -- a dict (`{field: value}`,
+exact top-level match), a list of strings (substring match, reaches into nested content), or a
+regex (`{regex: "pattern"}`, optionally scoped with `field:`). Old bare-dict/bare-list shapes still
+work, normalized into the same clause list. Full detail: [docs/CONTRACT_SPEC.md § match](docs/CONTRACT_SPEC.md#match--a-list-of-independent-clauses).
+
+**A `ToolCheck`'s `tool:` reference is resolved with zero built-in knowledge of any tool's
+name** -- including `execute_tool`. A dotted chain like `execute_tool.ui_applyChangesOnPageMarkup`
+is walked generically: find a span named by the first segment, check whether its input carries a
+`tool_name`/`tool_args` pair matching the next segment, descend into `tool_args`, repeat. Any
+dispatcher-shaped wrapper is expressible the same way, entirely from the contract side -- see
+[docs/CONTRACT_SPEC.md § ToolCheck](docs/CONTRACT_SPEC.md#toolcheck-standalone-tool-call-entries).
 
 **Resource names are never invented.** Every `name` under `resources` is copied verbatim from the
 platform's real resource catalog (a service id, a page name, a variable/widget/javascript name) —
@@ -287,9 +306,9 @@ without a separate `operationId`/`class`+`method`/`table_name`+`column_name` fie
 | Plugin | Checks |
 |--------|--------|
 | `skills_loaded` | Required skill(s) loaded and succeeded, and no extra skills were loaded beyond the declared `required`/`optional` sets. |
-| `input_context` | Each declared `input_context[]` entry must have its resolved resource actually read, and its `terms` plus any qualifier terms parsed from the reference must appear in some tool-call input or output. The plugin also reports unrelated reads outside the declared resource/knowledge scope. |
+| `input_context` | Each declared path-based `input_context[]` entry must have its resolved resource actually read, and its `terms` plus any qualifier terms parsed from the reference must appear in some tool-call input or output. A standalone `ToolCheck` entry (`tool:` + `match:`) instead requires a matching call to that tool anywhere in the trace, independent of any path. The plugin also reports unrelated reads outside the declared resource/knowledge scope. |
 | `tool_calls` | The contract-wide `tools` policy is enforced: every `required` tool must appear in the trace and no `forbidden` tool may appear. |
-| `output` | Each declared `output[]` entry must be created/updated/deleted as specified, and no unrelated file changes are allowed outside the declared output scope. A `match` clause, if present, additionally requires the resource's properties (e.g. which operation it's bound to) to be verified on the same call that created/updated it -- for resources whose exact name isn't dictated by the task. |
+| `output` | Each declared path-based `output[]` entry must be created/updated/deleted as specified, and no unrelated file changes are allowed outside the declared output scope. A `match` clause, if present, additionally requires the resource's properties (e.g. which operation it's bound to) to be verified on the same call that created/updated it -- for resources whose exact name isn't dictated by the task. A standalone `ToolCheck` entry (`tool:` + `match:`) instead requires a matching call to that tool anywhere in the trace, independent of any path, and does not contribute to output's allowed-change scope. |
 | `trace_health` | The trace must not be in an error state, must not contain error spans, and must pass build validation when a Java service resource is part of the output. |
 | `resource_usage` | Duration, token, and cost metrics are reported for observability only; this plugin does not score or fail the run because no contract budget gate is enforced. |
 

@@ -7,38 +7,18 @@ from wm_agents_validator.models.trace_snapshot import (
     _paths_match,
     _span_base_name,
     extract_paths_from_input,
+    match_satisfied,
+    matching_tool_calls,
+    unwrap_execute_tool,
 )
-from wm_agents_validator.models.workflow_contract import WorkflowContract
-from wm_agents_validator.plugins.timing import OUTPUT_GENERATION_TOOLS, fmt_ms, sum_duration_ms
+from wm_agents_validator.models.workflow_contract import ToolCheck, WorkflowContract
+from wm_agents_validator.plugins.timing import fmt_ms, is_output_generation_tool, sum_duration_ms
 
 _OPERATION_TO_FILE_CHANGE_OPS: dict[str, set[str]] = {
     "CREATE": {"write", "edit"},
     "UPDATE": {"write", "edit"},
     "DELETE": {"delete"},
 }
-
-
-def _match_satisfied(match: dict | list, span_input: dict) -> bool:
-    """Checks a ``WriteSpec.match`` clause against one evidencing *write*-tool
-    call's structured input only -- ``match`` verifies what a write call
-    actually did, which is a distinct question from whether the right content
-    was *read* (that's ``terms``/``input_context.py``'s job, checked against
-    read-tool calls' input and output there). Keeping the two cleanly split by
-    tool category, not blended, is deliberate.
-
-    - dict form: every key must exist literally in ``span_input``, value exact
-      match (case-insensitive) -- for tools with flat, known-field-name kwargs
-      (e.g. ``ui_createApiAwareVariable``'s ``operationId``).
-    - list form: every value must appear as a *substring* of some value in
-      ``span_input`` (case-insensitive) -- substring, not exact-equality,
-      deliberately: a short keyword can never equal a whole field's value
-      (e.g. a widget tag inside ``write_file``'s ``file_content``), only
-      appear within it.
-    """
-    if isinstance(match, dict):
-        return all(str(span_input.get(k, "")).lower() == str(v).lower() for k, v in match.items())
-    existing_values = [str(v).lower() for v in span_input.values()]
-    return all(any(str(v).lower() in existing for existing in existing_values) for v in match)
 
 
 class OutputPlugin:
@@ -54,14 +34,25 @@ class OutputPlugin:
     A ``WriteSpec.match`` clause (only checked when non-empty) additionally
     requires that the *same* write-tool call whose input matched the resolved
     resource path also satisfy the declared key=value (or value-only)
-    assertions -- see ``_match_satisfied``. This is what makes a name-less,
+    assertions -- see ``match_satisfied``. This is what makes a name-less,
     policy-constrained ``resource`` reference (e.g. ``page.PetTable.variable``)
     meaningful rather than a near no-op: it verifies which properties the
     created/updated resource actually has, independent of what it was named.
-    Evidencing spans are restricted to ``OUTPUT_GENERATION_TOOLS`` -- ``match``
-    is about what a *write* call did, not about verifying read content (that's
-    ``terms``/``input_context.py``'s job, checked separately against read-tool
-    calls).
+    Path-based evidencing spans are any tool call classified as
+    output-generating by ``is_output_generation_tool`` (see
+    ``plugins/timing.py``) -- everything that isn't pure input-gathering, a
+    skill load, or a delegation, checked after unwrapping ``execute_tool`` to
+    whatever it actually invoked.
+
+    A ``ToolCheck`` entry (``tool:`` + optional ``match:``, see
+    ``models/workflow_contract.py``) is a completely separate, independent
+    kind of ``output[]`` entry -- not tied to any ``resource:``/path at all.
+    It passes when a matching call is found anywhere in the trace (resolved
+    generically -- see ``resolve_dotted_tool_calls`` -- with zero built-in
+    knowledge of any specific tool's name), and fails otherwise. It proves
+    nothing about a resource's create/update/delete state; it's its own
+    pass/fail check, for a tool whose args carry no file path the framework
+    could compare against ``resources``' registered path.
 
     Every check must pass for ``passed=True`` -- no partial credit (see the
     Scoring section of the contract schema).
@@ -80,7 +71,27 @@ class OutputPlugin:
         changed_paths = {fc.path for fc in snapshot.file_changes}
         allowed_patterns: list[str] = []
 
-        for write in contract.output:
+        for entry in contract.output:
+            if isinstance(entry, ToolCheck):
+                calls = matching_tool_calls(snapshot.spans, [entry])
+                label = f"tool:{entry.tool}"
+                if calls:
+                    checks[label] = {"passed": True, "detail": f"matching call to {entry.tool} observed"}
+                else:
+                    detail = f"no call to {entry.tool} matching {entry.match} found anywhere in the trace" if entry.match else f"no call to {entry.tool} found anywhere in the trace"
+                    checks[label] = {"passed": False, "detail": detail}
+                    violations.append(
+                        Violation(
+                            code="tool_check_not_found",
+                            message=f"Tool check '{entry.tool}': {detail}",
+                            plugin=self.name,
+                            resource=label,
+                            evidence={"tool": entry.tool, "match": entry.match},
+                        )
+                    )
+                continue
+
+            write = entry
             path, _qualifiers = contract.resources.resolve(write.resource)
             allowed_patterns.append(path)
 
@@ -91,18 +102,17 @@ class OutputPlugin:
             match_ok = True
             evidencing_names: list[str] = []
             if write.match:  # falsy for both {} and [] -- no special-casing needed
-                evidencing_spans = [
-                    span
-                    for span in snapshot.spans
-                    if span.type == "TOOL"
-                    and _span_base_name(span.name) in OUTPUT_GENERATION_TOOLS
-                    and any(
-                        _paths_match(path, p)
-                        for p in extract_paths_from_input(span.input or {}, _span_base_name(span.name))
-                    )
-                ]
-                match_ok = any(_match_satisfied(write.match, span.input or {}) for span in evidencing_spans)
-                evidencing_names = [_span_base_name(s.name) for s in evidencing_spans]
+                evidencing_calls: list[tuple[str, dict]] = []
+                for span in snapshot.spans:
+                    if span.type != "TOOL":
+                        continue
+                    name, tool_input = unwrap_execute_tool(_span_base_name(span.name), span.input or {})
+                    if not is_output_generation_tool(name):
+                        continue
+                    if any(_paths_match(path, p) for p in extract_paths_from_input(tool_input, name)):
+                        evidencing_calls.append((name, tool_input))
+                match_ok = any(match_satisfied(write.match, tool_input) for _, tool_input in evidencing_calls)
+                evidencing_names = [name for name, _ in evidencing_calls]
 
             passed_entry = operation_ok and match_ok
             if passed_entry:
@@ -162,7 +172,8 @@ class OutputPlugin:
         output_generation_spans = [
             span
             for span in snapshot.spans
-            if span.type == "TOOL" and _span_base_name(span.name) in OUTPUT_GENERATION_TOOLS
+            if span.type == "TOOL"
+            and is_output_generation_tool(unwrap_execute_tool(_span_base_name(span.name), span.input or {})[0])
         ]
         output_generation_ms = sum_duration_ms(output_generation_spans)
         checks["output generation time"] = {

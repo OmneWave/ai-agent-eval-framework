@@ -1,8 +1,101 @@
 from __future__ import annotations
 
-from typing import Literal
+import re
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class MatchClause(BaseModel):
+    """One condition within a ``match`` list (see ``HasMatchClauses``).
+
+    Abstract base -- each concrete clause kind is its own subclass owning its
+    own ``satisfied()`` logic (a small Strategy hierarchy): evaluating a
+    clause is a single polymorphic call, and adding a new clause kind means
+    adding a subclass plus one branch in ``parse()``, not editing every
+    existing clause's logic.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    def satisfied(self, tool_input: dict[str, Any]) -> bool:
+        raise NotImplementedError
+
+    @staticmethod
+    def parse(raw: object) -> "MatchClause":
+        if isinstance(raw, MatchClause):
+            return raw
+        if isinstance(raw, str):
+            return SubstringMatchClause(values=[raw])
+        if isinstance(raw, list):
+            return SubstringMatchClause(values=raw)
+        if isinstance(raw, dict) and "regex" in raw and raw.keys() <= {"regex", "field"}:
+            return RegexMatchClause.model_validate(raw)
+        if isinstance(raw, dict):
+            return ExactMatchClause(fields=raw)
+        raise TypeError(f"invalid match clause: {raw!r} (expected a dict, a list of strings, or a {{regex: ...}} mapping)")
+
+
+class ExactMatchClause(MatchClause):
+    """``{field: value, ...}`` -- every key must exist literally as a
+    top-level field in the call's input, value equal (case-insensitive)."""
+
+    fields: dict[str, str | int | bool]
+
+    def satisfied(self, tool_input: dict[str, Any]) -> bool:
+        return all(str(tool_input.get(k, "")).lower() == str(v).lower() for k, v in self.fields.items())
+
+
+class SubstringMatchClause(MatchClause):
+    """A list of strings -- every value must appear as a substring of some
+    top-level field's value in the call's input (case-insensitive); a
+    field's value is stringified first, so this also reaches into nested
+    objects/arrays without any special addressing syntax."""
+
+    values: list[str]
+
+    def satisfied(self, tool_input: dict[str, Any]) -> bool:
+        haystacks = [str(v).lower() for v in tool_input.values()]
+        return all(any(needle.lower() in haystack for haystack in haystacks) for needle in self.values)
+
+
+class RegexMatchClause(MatchClause):
+    """``{regex: "<pattern>"}``, optionally with ``field: <name>`` to scope
+    the search to one top-level field instead of the whole input. ``pattern``
+    is matched case-insensitively via ``re.search``."""
+
+    regex: str
+    field: str | None = None
+
+    def satisfied(self, tool_input: dict[str, Any]) -> bool:
+        haystack = str(tool_input.get(self.field, "")) if self.field else " ".join(str(v) for v in tool_input.values())
+        return re.search(self.regex, haystack, re.IGNORECASE) is not None
+
+
+class HasMatchClauses(BaseModel):
+    """Shared ``match`` field for ``WriteSpec``/``ToolCheck``: a list of
+    independent ``MatchClause`` entries, ALL of which must hold (AND)
+    against one tool call's structured input. Accepts the legacy shapes
+    transparently: a bare dict becomes a single ``ExactMatchClause``; a bare
+    list of strings becomes a single ``SubstringMatchClause``; a mixed list
+    of dicts/lists/regex-mappings is parsed per-item via ``MatchClause.parse``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    match: list[MatchClause] = Field(default_factory=list)
+
+    @field_validator("match", mode="before")
+    @classmethod
+    def _normalize_match(cls, value: object) -> object:
+        if not value:
+            return []  # None, {}, or [] -- no match clause declared at all
+        if isinstance(value, dict):
+            # Legacy dict-form is unconditionally exact-match semantics -- bypass
+            # parse()'s regex-sniffing so a field that happens to be named
+            # "regex" is still matched literally, not misread as a RegexMatchClause.
+            return [ExactMatchClause(fields=value)]
+        return [MatchClause.parse(item) for item in value]
 
 
 class ResourceEntry(BaseModel):
@@ -101,6 +194,29 @@ class SkillsSpec(BaseModel):
     optional: list[str] = Field(default_factory=list)
 
 
+class ToolCheck(HasMatchClauses):
+    """A standalone, independent assertion: "this exact tool call happened,
+    somewhere in the trace, carrying this exact content" -- with no
+    connection to any ``resource:``/path at all. Lives as its own entry
+    alongside ``ReadSpec``/``WriteSpec`` entries in ``input_context``/
+    ``output`` (see ``WorkflowContract``), for a tool that addresses whatever
+    it acts on by an identifier or other structured argument rather than a
+    literal file path the framework could extract and compare against
+    ``resources``' registered path.
+
+    ``tool`` is a plain name, or a dot-separated chain describing a wrapper
+    call and what it invoked (e.g. ``execute_tool.ui_applyChangesOnPageMarkup``)
+    -- resolved generically by ``resolve_dotted_tool_calls``
+    (``models/trace_snapshot.py``), which has no built-in knowledge of any
+    specific tool's name; the chain is entirely up to the contract author.
+
+    ``match`` (see ``HasMatchClauses``) is empty by default, meaning any call
+    to ``tool`` counts.
+    """
+
+    tool: str
+
+
 class ReadSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -108,28 +224,17 @@ class ReadSpec(BaseModel):
     terms: list[str] = Field(default_factory=list)
 
 
-class WriteSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class WriteSpec(HasMatchClauses):
+    """``match`` (see ``HasMatchClauses``) is an evidence assertion against
+    the *same* evidencing tool call's structured input -- unlike ``terms``
+    (substring match, anywhere in the whole trace), ``match`` clauses are
+    scoped to the one call that also matched the resolved ``resource`` path.
+    Empty by default -- every contract with no ``match`` clause is unaffected.
+    See docs/CONTRACT_SPEC.md.
+    """
 
     resource: str
     operation: Literal["CREATE", "UPDATE", "DELETE"]
-    match: dict[str, str | int | bool] | list[str] = Field(default_factory=dict)
-    """Evidence assertion against the *same* evidencing tool call's structured input
-    -- unlike ``terms`` (substring match, anywhere in the whole trace), ``match`` is
-    always an EXACT match (case-insensitive), scoped to the one call that also
-    matched the resolved ``resource`` path. Two shapes:
-
-    - dict form -- exact key=value: every key must exist literally in that call's
-      input, and its value must equal the given value exactly. Use when the field
-      name is known (e.g. ``{operationId: petstore_findPetsByTags}``).
-    - list form -- exact value, unknown field: each value must equal exactly *some*
-      field's value in that call's input, whatever key it's under. Use when the
-      expected value is known but not (or shouldn't be hardcoded as) the field name
-      holding it (e.g. ``[petstore_findPetsByTags]``).
-
-    Never substring/fuzzy in either form. Defaults to ``{}`` (falsy, same as an
-    empty list) -- every contract with no ``match`` clause is unaffected. See
-    docs/CONTRACT_SPEC.md."""
 
 
 class ToolsSpec(BaseModel):
@@ -154,8 +259,16 @@ class WorkflowContract(BaseModel):
     skills: SkillsSpec
     knowledge: list[str] = Field(default_factory=list)
     resources: ResourceRegistry = Field(default_factory=ResourceRegistry)
-    input_context: list[ReadSpec] = Field(default_factory=list)
-    output: list[WriteSpec] = Field(default_factory=list)
+    input_context: list[ReadSpec | ToolCheck] = Field(default_factory=list)
+    """Each entry is either a ``ReadSpec`` (path-based: "this resource must be
+    read") or a standalone ``ToolCheck`` (tool-based: "this exact tool call
+    must have happened, with this content") -- independent of one another."""
+    output: list[WriteSpec | ToolCheck] = Field(default_factory=list)
+    """Each entry is either a ``WriteSpec`` (path-based: "this resource must be
+    created/updated/deleted") or a standalone ``ToolCheck`` (tool-based: "this
+    exact tool call must have happened, with this content") -- independent of
+    one another; a ``ToolCheck`` here proves nothing about any resource's path,
+    it is its own pass/fail check."""
     tools: ToolsSpec = Field(default_factory=ToolsSpec)
 
     @property

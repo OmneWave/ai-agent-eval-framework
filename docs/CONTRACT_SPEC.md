@@ -19,8 +19,8 @@ and why it exists. For the plugin behavior that reads each section, see
 | `skills` | object | yes | See [Skills](#skills). |
 | `knowledge` | `[string]` | no, default `[]` | See [Knowledge](#knowledge). |
 | `resources` | object | no, default empty | The resource registry — see [Resources](#resources). |
-| `input_context` | `[object]` | no, default `[]` | List of things that must be **read**. See [input_context](#input_context). |
-| `output` | `[object]` | no, default `[]` | List of things that must be **created/updated/deleted**. See [output](#output). |
+| `input_context` | `[object]` | no, default `[]` | List of things that must be **read** -- each entry is either a path-based `ReadSpec` or a standalone `ToolCheck`. See [input_context](#input_context) and [ToolCheck](#toolcheck-standalone-tool-call-entries). |
+| `output` | `[object]` | no, default `[]` | List of things that must be **created/updated/deleted** -- each entry is either a path-based `WriteSpec` or a standalone `ToolCheck`. See [output](#output) and [ToolCheck](#toolcheck-standalone-tool-call-entries). |
 | `tools` | object | no, default all-empty | One flat, contract-wide tool policy. See [tools](#tools). |
 
 Nothing else exists at the top level (`model_config = ConfigDict(extra="forbid")` on every
@@ -211,7 +211,7 @@ scope was actually declared) all fail the plugin, not just dilute its score.
 output:
   - resource: string                      # required
     operation: CREATE | UPDATE | DELETE     # required
-    match: {field: value, ...} | [value, ...]  # optional, default {}
+    match: [clause, ...]                    # optional, default [] -- see "match" below
 ```
 
 Every entry means: **this resource must be created/updated/deleted.**
@@ -220,56 +220,86 @@ Every entry means: **this resource must be created/updated/deleted.**
 |---|---|---|---|---|
 | `resource` | `string` | yes | any valid dotted reference | Resolved via `resources`. |
 | `operation` | `string` | yes | `CREATE`, `UPDATE`, `DELETE` | The expected file operation. Checked against the trace's actual `FileChangeRecord.operation` — `CREATE`/`UPDATE` accept an observed `write` or `edit`; `DELETE` requires an observed `delete`. Mismatch → `output_operation_mismatch`. |
-| `match` | `dict` or `list` | no, default `{}` | any field:value pairs, or any list of values | Evidence assertion against the *same* tool call whose input also matched this entry's resolved path (an "evidencing call") — see below. Mismatch → `output_match_mismatch`. |
+| `match` | `[clause]` | no, default `[]` | see [match clauses](#match--a-list-of-independent-clauses) | Evidence assertion against the *same* tool call whose input also matched this entry's resolved path (an "evidencing call") — see below. Mismatch → `output_match_mismatch`. |
 
-### `match` — a scoped evidence assertion (unlike `terms`, tied to one specific call)
+### `match` — a list of independent clauses
 
 `match` and `terms` (see [input_context](#input_context)) differ in **which calls they inspect**,
 mirroring the two plugins' own responsibilities: `terms` verifies what got *read* (scoped to
 read-tool calls, input and output — see above); `match` verifies what got *written* (scoped to
-write-tool calls, input only — `OUTPUT_GENERATION_TOOLS`: `write_file`, `edit_file_content`,
-`delete_file`, `ui_createApiAwareVariable`, `ui_createNonApiAwareVariable`, `ui_updateVariable`,
-`platform_createWebPage`, `platform_compile`). Within that write-tool scope, `match` is further
-narrowed to the *one call* that also matched this entry's resolved path (the "evidencing call" —
-see the coherence rule below). Two shapes, with different matching semantics because they fit
-different tool-argument shapes:
+write-tool calls, input only — any tool call classified as output-generating by
+`is_output_generation_tool`, i.e. everything that isn't pure input-gathering, a skill load, or a
+delegation; see `plugins/timing.py`). Within that write-tool scope, `match` is further narrowed to
+the *one call* that also matched this entry's resolved path (the "evidencing call" — see the
+coherence rule below).
 
-- **dict form** — `{field: value, ...}`: **exact match**. Every key must exist literally in the
-  evidencing call's structured *input*, and its value must equal the given value exactly
-  (case-insensitive). For tools with flat, short scalar arguments where the field name is known
-  (e.g. `ui_createApiAwareVariable`'s `operationId`):
+`match` is a **list of clauses, ALL of which must hold (AND)**. Each clause is one of three kinds
+(implemented as a small polymorphic hierarchy in `models/workflow_contract.py` — `MatchClause`
+subclasses, each owning its own `satisfied()` check):
+
+- **dict clause** — `{field: value, ...}` (`ExactMatchClause`): **exact match**. Every key must
+  exist literally as a *top-level* field in the evidencing call's structured input, value equal
+  exactly (case-insensitive). For tools with flat, short scalar arguments where the field name is
+  known and not nested (e.g. `ui_updateVariable`'s `pageName`):
   ```yaml
   match:
-    operationId: petstore_findPetsByTags
+    - pageName: PetTable
   ```
-- **list form** — `[value, ...]`: **substring match**. Every value must appear as a substring of
-  some value in that same call's input (case-insensitive). Use this shape when the expected value
-  is known but the field name isn't (e.g. it may differ across tool versions), or when the value
-  lives inside a larger content blob rather than being a field's entire value — e.g. a widget tag
-  inside `write_file`'s `file_content` (a short keyword can never *equal* a whole file's content,
-  only appear within it):
+- **list clause** — `[value, ...]` (`SubstringMatchClause`): **substring match**. Every value must
+  appear as a substring of some field's *stringified* value in that same call's input
+  (case-insensitive) — since the value is stringified first, this also reaches into nested
+  objects/arrays (e.g. a field buried inside a nested dict like `apiDetails.operationId`, or an
+  item inside a list like `listOfChanges`), without any special addressing syntax. Use this
+  whenever the expected value might be nested, the exact field name isn't known/stable, or the
+  value lives inside a larger content blob (e.g. a widget tag inside `write_file`'s
+  `file_content` — a short keyword can never *equal* a whole file's content, only appear within
+  it):
   ```yaml
-  match: [petstore_findPetsByTags]
+  match:
+    - [petstore_findPetsByTags]
   # or, checking markup content written by write_file:
-  match: [wm-button]
+  match:
+    - [wm-button]
+  ```
+- **regex clause** — `{regex: "<pattern>"}`, optionally with `field: <name>` to scope the search to
+  one top-level field instead of the whole call (`RegexMatchClause`). `pattern` is matched
+  case-insensitively via `re.search`:
+  ```yaml
+  match:
+    - regex: "^petstore_.*Service$"
+      field: variableName
   ```
 
-**Coherence rule**: everything in `match` must be satisfied on the *same* write-tool call that also
-matched the resolved `resource` path — never split across two different calls, and never satisfied
-by a read call even if it carries the same value. This is found by first narrowing the trace to
-"evidencing spans" (`TOOL` spans whose base name is in `OUTPUT_GENERATION_TOOLS` **and** whose
-extracted input paths match the resolved path), then checking `match` only against those spans'
-own input. A call that only matches the path but not every `match` condition, or a *different*
-call elsewhere in the trace that happens to carry one of the `match` values but never touched this
-resource, never counts.
+Clauses of different kinds freely mix in the same list:
+
+```yaml
+match:
+  - pageName: PetTable                 # dict clause
+  - [petstore_findPetsByTags, replace]  # list clause -- both substrings required
+  - regex: "^petstore_"                 # regex clause, whole-input search
+```
+
+**Legacy shapes still work unchanged** — parsed by the same `MatchClause.parse` a mixed list uses:
+a bare dict (`match: {operationId: x}`) becomes a single dict clause; a bare list of strings
+(`match: [x, y]`) becomes a single list clause.
+
+**Coherence rule**: everything in one clause must be satisfied on the *same* write-tool call that
+also matched the resolved `resource` path — never split across two different calls, and never
+satisfied by a read call even if it carries the same value. This is found by first narrowing the
+trace to "evidencing spans" (`TOOL` spans classified output-generating **and** whose extracted
+input paths match the resolved path), then checking every clause in `match` only against those
+spans' own input. A call that only matches the path but not every clause, or a *different* call
+elsewhere in the trace that happens to carry one of the values but never touched this resource,
+never counts.
 
 **Still permissive across *which* call**: if multiple evidencing calls exist (e.g. a retry after
-an earlier mistake), only one of them needs to satisfy `match` (`any()` match, same "first match
-anywhere wins" philosophy as `terms`) — a wrong-then-corrected attempt still passes. This is a
-deliberate softness, not a bug: `match`'s purpose is to prove the resource was created with the
-right properties *at least once* in the trace, not that the agent got it right immediately.
+an earlier mistake), only one of them needs to satisfy the *entire* `match` list (`any()` match,
+same "first match anywhere wins" philosophy as `terms`) — a wrong-then-corrected attempt still
+passes. This is a deliberate softness, not a bug: `match`'s purpose is to prove the resource was
+created with the right properties *at least once* in the trace, not that the agent got it right
+immediately.
 
-`match` defaults to `{}` — a contract with no `match` clause behaves exactly as before this field
+`match` defaults to `[]` — a contract with no `match` clause behaves exactly as before this field
 existed.
 
 Every resource resolved from `output` collectively defines the **exhaustive** set of things
@@ -278,6 +308,60 @@ is a violation (`unrelated_file_changed`) — this single mechanism covers both 
 creep" and "nothing protected got touched." There is no separate `protected:` list: a
 resource that's only ever referenced under `input_context` (never `output`) is automatically
 protected, because any change to it is caught by this same check.
+
+**A `ToolCheck` entry declared elsewhere in `output`/`input_context` (see next section) does
+NOT contribute to this exhaustive scope** — it's fully independent of any path, so it neither
+counts as an allowed change nor triggers the unrelated-change check by itself. If a tool proven
+via a `ToolCheck` also produces a real file change (e.g. `ui_createApiAwareVariable` writing
+`.variables.json`), that file still needs its *own* `resource:`/`WriteSpec` entry to be
+recognized as an allowed change — the two entry kinds are complementary, not substitutes for
+each other.
+
+---
+
+## ToolCheck: standalone tool-call entries
+
+```yaml
+output:            # (or input_context -- same shape, same semantics, either list)
+  - tool: string          # required, e.g. "ui_applyChangesOnPageMarkup" or "execute_tool.ui_applyChangesOnPageMarkup"
+    match: [clause, ...]    # optional, default [] -- same clause kinds as WriteSpec.match above
+```
+
+A `ToolCheck` is a **completely independent, standalone assertion**: "this exact tool call
+happened somewhere in the trace, carrying this content" — with **no connection to any
+`resource:`/path at all**. It lives as its own entry, a sibling to `resource:`-based entries,
+inside either `input_context` or `output` (Pydantic distinguishes the two entry kinds by which
+required field is present — `resource`+`operation` for a `WriteSpec`/`resource`+`terms` for a
+`ReadSpec`, vs. `tool` for a `ToolCheck`). It's for a tool that addresses whatever it acts on by an
+identifier or other structured argument rather than a literal file path the framework could
+extract and compare against `resources`' registered path — instead of teaching the framework a new
+per-tool path-derivation rule in Python, the contract just asserts the call itself.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `tool` | `string` | yes | A plain tool name, or a dot-separated chain describing a wrapper call and what it invoked (e.g. `execute_tool.ui_applyChangesOnPageMarkup`). |
+| `match` | `[clause]` | no, default `[]` | Same three clause kinds as `WriteSpec.match` above. Empty means any call to `tool` counts. |
+
+**Resolution is purely structural, with zero built-in knowledge of any specific tool's name** —
+including `execute_tool`. `tool: A.B` is resolved by `resolve_dotted_tool_calls`
+(`models/trace_snapshot.py`) as: find a span whose name is `A`; inside that span's input, check
+whether it carries a `tool_name`/`tool_args` pair (the generic shape a dispatcher call takes) with
+`tool_name == B`; if so, descend into `tool_args` as the resolved input. A three-segment chain
+(`A.B.C`) repeats the same descent one level further. A one-segment `tool: A` matches the span
+directly, no descent at all. This is one generic mechanism, not a special case for `execute_tool`
+— any dispatcher-shaped tool, wrapping anything, is expressible the same way, entirely from the
+contract side.
+
+```yaml
+output:
+  - tool: execute_tool.ui_applyChangesOnPageMarkup
+    match:
+      - pageName: PetTable
+      - [petstore_findPetsByTagsTable1, replace]
+```
+
+Fails with `tool_check_not_found` when no call anywhere in the trace matches both the resolved
+chain and every clause in `match`.
 
 **Resolved — platform-created resources.** `FileChangeRecord` extraction
 (`TraceSnapshot.file_changes`) used to only recognize `write_file`/`edit_file_content`/
@@ -346,9 +430,9 @@ equivalent of one SWE-bench "instance."
 | Plugin | Checks (each is one `passed: bool` entry in `evidence["checks"]`) |
 |---|---|
 | `skills_loaded` | one per skill in `skills.required` ("loaded successfully"); one rollup ("no skills loaded beyond `required`+`optional`") |
-| `input_context` | one per `input_context[]` entry ("resource actually read" + "declared terms/qualifiers observed"); one rollup for output-side qualifiers; one rollup ("no unrelated `read_files` outside `knowledge` + referenced resources") |
+| `input_context` | one per `ReadSpec` entry ("resource actually read" + "declared terms/qualifiers observed"); one per `ToolCheck` entry ("matching call to `tool` found"); one rollup for output-side qualifiers; one rollup ("no unrelated `read_files` outside `knowledge` + referenced resources") |
 | `tool_calls` | one per tool in `tools.required` ("used somewhere in the trace"); one rollup ("no `tools.forbidden` tool used anywhere") |
-| `output` | one per `output[]` entry ("correct create/update/delete operation"); one rollup ("no unrelated file change") |
+| `output` | one per `WriteSpec` entry ("correct create/update/delete operation"); one per `ToolCheck` entry ("matching call to `tool` found"); one rollup ("no unrelated file change") |
 | `trace_health` | "trace status is not error"; "no error spans"; "build passed" (only present when a `javaservice`-typed resource is in `output`) |
 | `resource_usage` | none — no checks, always `passed=True`, purely observational metrics in `evidence["metrics"]` |
 
@@ -407,10 +491,21 @@ input_context:
 output:
   - resource: page.PetTable.variable.findPetsByTagsVariable
     operation: CREATE
-    match:
-      operationId: petstore_findPetsByTags
   - resource: page.PetTable.widget.swagger_findPetsByTagsTable1
     operation: UPDATE
+  # ToolCheck entries -- standalone, independent of the resource: entries above.
+  # ui_createApiAwareVariable/ui_applyChangesOnPageMarkup address what they act
+  # on by identifier (pageName, operationId, componentName), not a literal path,
+  # so `match` here uses list clauses to reach the values nested inside
+  # apiDetails/listOfChanges rather than a dict clause expecting a top-level field.
+  - tool: execute_tool.ui_createApiAwareVariable
+    match:
+      - pageName: PetTable
+      - [petstore_findPetsByTags]
+  - tool: execute_tool.ui_applyChangesOnPageMarkup
+    match:
+      - pageName: PetTable
+      - [swagger_findPetsByTagsTable1, replace]
 
 tools:
   required: [read_files, ui_createApiAwareVariable]
