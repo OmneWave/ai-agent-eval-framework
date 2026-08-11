@@ -28,6 +28,21 @@ policy (`tools.required`/`forbidden`) is written in terms of the *actual* tool
 name passed as its `tool_name` argument. See `_build_tools_summary`."""
 
 
+def unwrap_execute_tool(base_name: str, tool_input: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Resolve a span to the tool it actually invoked and that tool's own
+    arguments -- if ``base_name`` is the generic ``execute_tool`` dispatcher,
+    return its wrapped ``tool_name``/``tool_args`` instead of the wrapper
+    shell, so every name- and path-based check downstream (file-change
+    detection, output-evidencing, tool-name policy) sees the real call. Falls
+    through unchanged for a direct call, and for a dispatcher call that's
+    missing a usable ``tool_name`` (nothing to unwrap to)."""
+    if base_name == EXECUTE_TOOL_WRAPPER:
+        wrapped_name = tool_input.get("tool_name")
+        if wrapped_name:
+            return str(wrapped_name), (tool_input.get("tool_args") or {})
+    return base_name, tool_input
+
+
 class SkillLoadRecord(BaseModel):
     skill_names: list[str]
     success: bool = True
@@ -201,21 +216,21 @@ class TraceSnapshot(BaseModel):
         for span in self.spans:
             if span.type != "TOOL":
                 continue
-            base_name = _span_base_name(span.name)
+            base_name, tool_input = unwrap_execute_tool(_span_base_name(span.name), span.input or {})
             if base_name not in FILE_WRITE_TOOLS:
                 continue
             operation = "delete" if "delete" in base_name else "edit" if "edit" in base_name else "write"
-            for path in extract_paths_from_input(span.input or {}, base_name):
+            for path in extract_paths_from_input(tool_input, base_name):
                 changes.append(
                     FileChangeRecord(path=path, operation=operation, tool_name=base_name)
                 )
         for span in self.spans:
             if span.type != "TOOL":
                 continue
-            base_name = _span_base_name(span.name)
+            base_name, tool_input = unwrap_execute_tool(_span_base_name(span.name), span.input or {})
             if base_name not in VARIABLE_CREATE_TOOLS:
                 continue
-            path = _variable_change_path(span.input or {})
+            path = _variable_change_path(tool_input)
             if path is None:
                 continue
             operation = "edit" if base_name == "ui_updateVariable" else "write"
@@ -344,6 +359,70 @@ def _variable_change_path(tool_input: dict[str, Any]) -> str | None:
         return f"src/main/webapp/pages/{page}/{page}.variables.json"
     path = tool_input.get("path") or tool_input.get("file_path")
     return str(path) if path else None
+
+
+def match_satisfied(match: list[Any], tool_input: dict[str, Any]) -> bool:
+    """Checks every clause in a ``WriteSpec.match``/``ToolCheck.match`` list
+    against one tool call's structured input -- ALL clauses must hold (AND).
+    Purely a fold over polymorphic ``clause.satisfied()`` calls -- this
+    function has no knowledge of what kinds of clause exist; that logic lives
+    entirely on each ``MatchClause`` subclass in ``models/workflow_contract.py``
+    (``ExactMatchClause``/``SubstringMatchClause``/``RegexMatchClause``).
+    """
+    return all(clause.satisfied(tool_input) for clause in match)
+
+
+def resolve_dotted_tool_calls(spans: list[SpanRecord], dotted_tool: str) -> list[dict[str, Any]]:
+    """Resolve a contract-authored ``tool:`` reference -- a plain tool name, or
+    a dot-separated chain (e.g. ``execute_tool.ui_applyChangesOnPageMarkup``)
+    describing a wrapper call and what it invoked -- to the list of resolved
+    innermost-call inputs among ``spans`` that match the *entire* chain.
+
+    This is a purely structural traversal with no built-in knowledge of any
+    specific tool's name (``execute_tool`` included): each segment after the
+    first is matched by descending into the current input's own
+    ``tool_name``/``tool_args`` pair (the shape a generic dispatcher call
+    takes) and checking whether ``tool_name`` equals that segment -- the same
+    descent applies uniformly regardless of what the outer or inner tool is
+    called. A contract that writes a two-segment ``tool:`` for some other
+    dispatcher-shaped tool gets the identical traversal for free; nothing here
+    is specific to any one tool.
+
+    A one-segment reference (no dots) matches the span directly, with no
+    descent at all.
+    """
+    segments = dotted_tool.split(".")
+    resolved: list[dict[str, Any]] = []
+    for span in spans:
+        if span.type != "TOOL":
+            continue
+        if _span_base_name(span.name) != segments[0]:
+            continue
+        current: Any = span.input or {}
+        matched = True
+        for segment in segments[1:]:
+            if not isinstance(current, dict) or current.get("tool_name") != segment:
+                matched = False
+                break
+            current = current.get("tool_args") or {}
+        if matched and isinstance(current, dict):
+            resolved.append(current)
+    return resolved
+
+
+def matching_tool_calls(spans: list[SpanRecord], tool_checks: list[Any]) -> list[dict[str, Any]]:
+    """Every resolved call satisfying one of the given ``ToolCheck``
+    declarations (duck-typed on ``.tool``/``.match``) -- the tool call itself
+    is deemed sufficient evidence, without extracting or comparing a file
+    path at all. See ``ToolCheck`` in ``models/workflow_contract.py`` and
+    ``resolve_dotted_tool_calls`` above.
+    """
+    calls: list[dict[str, Any]] = []
+    for check in tool_checks:
+        for tool_input in resolve_dotted_tool_calls(spans, check.tool):
+            if not check.match or match_satisfied(check.match, tool_input):
+                calls.append(tool_input)
+    return calls
 
 
 def _paths_match(pattern: str, path: str) -> bool:

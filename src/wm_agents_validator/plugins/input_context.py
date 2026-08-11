@@ -10,8 +10,9 @@ from wm_agents_validator.models.trace_snapshot import (
     _paths_match,
     _span_base_name,
     extract_paths_from_input,
+    matching_tool_calls,
 )
-from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.models.workflow_contract import ToolCheck, WorkflowContract
 from wm_agents_validator.plugins.timing import INPUT_GATHERING_TOOLS, fmt_ms, sum_duration_ms
 
 SpanIndexEntry = tuple[SpanRecord, list[str], str, str]
@@ -80,6 +81,29 @@ class InputContextPlugin:
         all_expected_paths: list[str] = []
 
         for entry in contract.input_context:
+            if isinstance(entry, ToolCheck):
+                calls = matching_tool_calls(snapshot.spans, [entry])
+                label = f"tool:{entry.tool}"
+                if calls:
+                    entry_reports[label] = {"passed": True, "reason": f"matching call to {entry.tool} observed"}
+                else:
+                    detail = (
+                        f"no call to {entry.tool} matching {entry.match} found anywhere in the trace"
+                        if entry.match
+                        else f"no call to {entry.tool} found anywhere in the trace"
+                    )
+                    entry_reports[label] = {"passed": False, "reason": detail}
+                    violations.append(
+                        Violation(
+                            code="tool_check_not_found",
+                            message=f"Tool check '{entry.tool}': {detail}",
+                            plugin=self.name,
+                            resource=label,
+                            evidence={"tool": entry.tool, "match": entry.match},
+                        )
+                    )
+                continue
+
             path, ref_qualifiers = contract.resources.resolve(entry.resource)
             all_expected_paths.append(path)
             terms = list(entry.terms) + list(ref_qualifiers)
@@ -152,6 +176,8 @@ class InputContextPlugin:
         # content-relevance check, so this plugin checks them instead.
         output_qualifier_terms: list[str] = []
         for write in contract.output:
+            if isinstance(write, ToolCheck):
+                continue
             path, ref_qualifiers = contract.resources.resolve(write.resource)
             all_expected_paths.append(path)
             output_qualifier_terms.extend(ref_qualifiers)

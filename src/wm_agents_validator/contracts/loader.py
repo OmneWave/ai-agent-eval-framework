@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.models.workflow_contract import ToolCheck, WorkflowContract
 
 
 def load_contract(path: str | Path) -> WorkflowContract:
@@ -18,10 +18,16 @@ def load_contract(path: str | Path) -> WorkflowContract:
 
 def _validate_references(contract: WorkflowContract, contract_path: Path) -> None:
     """Resolve every resource reference at load time, so a typo'd reference
-    fails fast here instead of deep inside a plugin."""
+    fails fast here instead of deep inside a plugin. A ``ToolCheck`` entry has
+    no resource reference to resolve -- it's checked directly against the
+    trace by name, not against ``resources`` -- so it's skipped here."""
     for entry in contract.input_context:
+        if isinstance(entry, ToolCheck):
+            continue
         _resolve_or_raise(contract, entry.resource, contract_path)
     for entry in contract.output:
+        if isinstance(entry, ToolCheck):
+            continue
         _resolve_or_raise(contract, entry.resource, contract_path)
 
 

@@ -74,7 +74,9 @@ class TraceHealthPlugin:
         else:
             checks[health_label] = {"passed": True, "detail": f"status={snapshot.status}, no error spans"}
 
-        javaservice_active = any(write.resource.split(".")[0] == "javaservice" for write in contract.output)
+        javaservice_active = any(
+            getattr(write, "resource", "").split(".")[0] == "javaservice" for write in contract.output
+        )
         build_passed = True
         if javaservice_active:
             build_label = "build"

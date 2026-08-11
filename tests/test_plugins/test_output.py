@@ -1,6 +1,17 @@
 from wm_agents_validator.models.trace_snapshot import SpanRecord
-from wm_agents_validator.models.workflow_contract import WriteSpec
-from wm_agents_validator.plugins.output import OutputPlugin, _match_satisfied
+from wm_agents_validator.models.trace_snapshot import match_satisfied as _match_satisfied_clauses
+from wm_agents_validator.models.workflow_contract import MatchClause, WriteSpec
+from wm_agents_validator.plugins.output import OutputPlugin
+
+
+def _match_satisfied(raw_match, tool_input):
+    """Test helper: parse a raw dict/list/string match shape the same way
+    ``HasMatchClauses``'s validator does, then evaluate it -- exercises the
+    real ``MatchClause.parse`` + polymorphic ``satisfied()`` path."""
+    clauses = [] if not raw_match else (
+        [MatchClause.parse(raw_match)] if isinstance(raw_match, dict) else [MatchClause.parse(item) for item in raw_match]
+    )
+    return _match_satisfied_clauses(clauses, tool_input)
 
 _VARIABLE = "page.PetTable.variable.findPetsByTagsVariable"
 _WIDGET = "page.PetTable.widget.swagger_findPetsByTagsTable1"
@@ -181,6 +192,32 @@ def test_match_satisfied_dict_and_list_shapes():
     # empty -- no constraint
     assert _match_satisfied({}, span_input) is True
     assert _match_satisfied([], span_input) is True
+
+
+def test_match_satisfied_regex_shape():
+    span_input = {"operationId": "petstore_findPetsByTags", "action": "replace"}
+
+    assert _match_satisfied([{"regex": "^petstore_.*Tags$", "field": "operationId"}], span_input) is True
+    assert _match_satisfied([{"regex": "^wrong$", "field": "operationId"}], span_input) is False
+    # no `field:` -- searches the whole stringified input
+    assert _match_satisfied([{"regex": "findPetsBy"}], span_input) is True
+
+
+def test_match_satisfied_mixed_clause_list_is_anded():
+    span_input = {"operationId": "petstore_findPetsByTags", "pageName": "PetTable"}
+
+    # one dict clause + one list-of-strings clause + one regex clause, all in
+    # the same match list -- every clause must hold
+    mixed = [
+        {"pageName": "PetTable"},
+        ["petstore_findPetsByTags"],
+        {"regex": "^PetTable$", "field": "pageName"},
+    ]
+    assert _match_satisfied(mixed, span_input) is True
+
+    # swap one clause to something false -- the whole thing fails
+    broken = [{"pageName": "PetTable"}, ["not_present"], {"regex": "^PetTable$", "field": "pageName"}]
+    assert _match_satisfied(broken, span_input) is False
 
 
 def test_output_never_referenced_resource_is_protected_via_unrelated_diff(snapshot, contract):

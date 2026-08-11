@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from wm_agents_validator.models.trace_snapshot import SpanRecord
+from wm_agents_validator.models.trace_snapshot import DELEGATION_TOOL_NAMES, SKILL_TOOL, SpanRecord
 
 # Tool calls whose purpose is pulling information INTO context -- exploring
 # the codebase/API, looking things up before acting. Intentionally broader
@@ -32,20 +32,21 @@ INPUT_GATHERING_TOOLS = frozenset(
     }
 )
 
-# Tool calls that produce or change output -- file writes plus the platform's
-# own create/update actions on variables, widgets, and pages.
-OUTPUT_GENERATION_TOOLS = frozenset(
-    {
-        "write_file",
-        "edit_file_content",
-        "delete_file",
-        "ui_createApiAwareVariable",
-        "ui_createNonApiAwareVariable",
-        "ui_updateVariable",
-        "platform_createWebPage",
-        "platform_compile",
-    }
-)
+# Tool calls that produce or change output. Deliberately NOT an explicit
+# allowlist of known write tools (an enumerated list silently misses any tool
+# it wasn't updated for -- a new platform action, or an existing one reached
+# only through the `execute_tool` dispatcher rather than called directly).
+# Instead this is the complement of the tools that are clearly NOT about
+# producing output: pure input-gathering/exploration calls, loading a skill,
+# and delegating to another agent. Anything else -- current or future,
+# built-in or MCP-provided -- counts as output generation automatically.
+# Callers should resolve a span through `unwrap_execute_tool` first, so the
+# *wrapped* tool name is what gets checked here, not the dispatcher shell.
+_NON_OUTPUT_TOOLS = INPUT_GATHERING_TOOLS | DELEGATION_TOOL_NAMES | {SKILL_TOOL}
+
+
+def is_output_generation_tool(tool_name: str) -> bool:
+    return tool_name not in _NON_OUTPUT_TOOLS
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
