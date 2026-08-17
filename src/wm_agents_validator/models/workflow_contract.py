@@ -187,11 +187,113 @@ class ResourceRegistry(BaseModel):
         return entry.path, remaining
 
 
+class SkillRequirement(BaseModel):
+    """One entry in ``skills.required`` -- a skill name, optionally declaring
+    other required skills that must load and succeed strictly before this one
+    (forming a DAG over ``required`` skills -- see ``SkillsSpec._validate_dag``
+    for the cycle/reference validation, and ``plugins/skills_loaded.py`` for
+    how the order itself is checked against a trace). A bare string in YAML
+    (no dependencies) normalizes to ``depends_on: []`` -- see
+    ``SkillsSpec._normalize_required``.
+
+    Dependencies are scoped to other ``required`` skills only -- a name in
+    ``depends_on`` must itself be a ``required`` skill's name, never an
+    ``optional`` one; ``optional`` stays a plain list of strings, untouched by
+    this feature, preserving its existing "documented, never required, never
+    penalized either way" guarantee with no exceptions.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    depends_on: list[str] = Field(default_factory=list)
+
+
 class SkillsSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    required: str | list[str]
+    required: list[SkillRequirement]
     optional: list[str] = Field(default_factory=list)
+
+    @field_validator("required", mode="before")
+    @classmethod
+    def _normalize_required(cls, value: object) -> object:
+        """Accepts the two legacy shapes (a bare name, or a flat list of
+        names) alongside the new ``{name, depends_on}`` shape -- and any mix
+        of bare names and dicts in one list -- normalizing all of them into
+        a canonical list of dicts for ``SkillRequirement`` to validate.
+        """
+        if isinstance(value, str):
+            return [{"name": value}]
+        if isinstance(value, list):
+            return [{"name": item} if isinstance(item, str) else item for item in value]
+        return value  # let pydantic raise its normal type error for anything else
+
+    @model_validator(mode="after")
+    def _validate_dag(self) -> "SkillsSpec":
+        """Validates ``required`` forms a well-formed DAG, failing loudly at
+        contract-load time rather than silently producing an unenforceable
+        or nonsensical dependency graph. Checked in order -- duplicate name,
+        then unknown reference, then self-dependency, then general cycle --
+        so each only runs once the prior ones found nothing, keeping error
+        messages maximally specific instead of a confusing generic cycle
+        report when the real problem is e.g. a typo'd reference.
+        """
+        names = [r.name for r in self.required]
+        seen: set[str] = set()
+        for name in names:
+            if name in seen:
+                raise ValueError(f"skills.required: duplicate skill name '{name}'")
+            seen.add(name)
+
+        for requirement in self.required:
+            for dep in requirement.depends_on:
+                if dep not in seen:
+                    raise ValueError(
+                        f"skills.required: '{requirement.name}' depends_on unknown skill "
+                        f"'{dep}' (not declared in skills.required)"
+                    )
+                if dep == requirement.name:
+                    raise ValueError(f"skills.required: '{requirement.name}' cannot depend on itself")
+
+        graph = {r.name: r.depends_on for r in self.required}
+        cycle = _find_dependency_cycle(graph)
+        if cycle:
+            raise ValueError(f"skills.required: dependency cycle detected: {' -> '.join(cycle)}")
+
+        return self
+
+
+def _find_dependency_cycle(graph: dict[str, list[str]]) -> list[str] | None:
+    """Small recursive DFS with a ``path`` list (for cycle reconstruction)
+    and a ``done`` memo set -- clarity over Tarjan/Kahn's-algorithm
+    efficiency, since a contract's skill-dependency graph is always tiny.
+    Returns the cycle as a list of names (e.g. ``["a", "b", "c", "a"]``) or
+    ``None`` if the graph is acyclic.
+    """
+    done: set[str] = set()
+    path: list[str] = []
+
+    def visit(node: str) -> list[str] | None:
+        if node in path:
+            return path[path.index(node):] + [node]
+        if node in done:
+            return None
+        path.append(node)
+        for dep in graph.get(node, []):
+            cycle = visit(dep)
+            if cycle:
+                return cycle
+        path.pop()
+        done.add(node)
+        return None
+
+    for start in graph:
+        if start not in done:
+            cycle = visit(start)
+            if cycle:
+                return cycle
+    return None
 
 
 class ToolCheck(HasMatchClauses):
