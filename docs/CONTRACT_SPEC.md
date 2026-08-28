@@ -34,18 +34,98 @@ dropped during design.
 
 ```yaml
 skills:
-  required: string | [string]   # required
-  optional: [string]            # optional, default []
+  required: string | [string] | [{name: string, depends_on: [string]}]   # required
+  optional: [string]                                                     # optional, default []
 ```
+
+`required` accepts three shapes, freely mixed within one list: a bare string, a flat list of
+strings (both legacy shapes, unchanged), and `{name, depends_on}` entries declaring that `name`
+must load **and succeed** only after every skill listed in `depends_on` has itself loaded and
+succeeded — forming a DAG over `required` skills. All three shapes normalize into the same
+canonical list at contract-load time.
 
 | Field | Type | Required | Possible values | Description |
 |---|---|---|---|---|
-| `required` | `string` or `[string]` | yes | any skill name(s) | Skill(s) that must load **and** succeed. Checked by the `skills_loaded` plugin. Missing → `skill_not_loaded`; requested but failed → `skill_load_failed`. Both are hard failures. |
-| `optional` | `[string]` | no | any skill name(s) | May load or not — never required, never counted as "extra." Loading anything **not** in `required` or `optional` is an `extra_skill_loaded` violation. |
+| `required` | `string`, `[string]`, or `[{name, depends_on}]` | yes | any skill name(s), optionally with dependencies | Skill(s) that must load **and** succeed. Checked by the `skills_loaded` plugin. Missing → `skill_not_loaded`; requested but failed → `skill_load_failed`. A declared `depends_on` order that wasn't respected → `skill_dependency_order_violated` (see below). All are hard failures. |
+| `optional` | `[string]` | no | any skill name(s) | May load or not — never required, never counted as "extra." Loading anything **not** in `required` or `optional` is an `extra_skill_loaded` violation. `depends_on` may only reference other `required` skills, never `optional` ones (rejected at load time — see below) — `optional` stays plain strings, untouched by this feature, so its existing "never penalized either way" guarantee has no exceptions. |
 
-Under the engine's scoring rule (see [Scoring](#scoring)), **every** required-skill check and
-the "no extra skills" check must pass for `skills_loaded.passed = True` — there is no partial
-credit for loading most-but-not-all required skills.
+Under the engine's scoring rule (see [Scoring](#scoring)), **every** required-skill check, every
+declared dependency-order check, and the "no extra skills" check must pass for
+`skills_loaded.passed = True` — there is no partial credit for loading most-but-not-all required
+skills, or for satisfying most-but-not-all declared dependency edges.
+
+### `depends_on` — a DAG over required skills
+
+```yaml
+skills:
+  required:
+    - explore-codebase
+    - name: explore-api
+      depends_on: [explore-codebase]
+    - name: variables
+      depends_on: [explore-api]
+  optional: [markup, javascript]
+```
+
+Declaration order in the YAML list doesn't matter — a dependency may reference a skill declared
+later in the list; only the graph's structure is checked, never text order.
+
+**Validated at contract-load time** (before any trace is evaluated), in this order, each check
+only running once the prior ones found nothing:
+
+1. **Duplicate name** in `required` — `skills.required: duplicate skill name '<name>'`.
+2. **Unknown `depends_on` reference** — every name in `depends_on` must itself be another
+   `required` skill's name; this is also exactly what rejects a `depends_on` pointing at an
+   `optional` skill, or a typo — `skills.required: '<name>' depends_on unknown skill '<dep>' (not declared in skills.required)`.
+3. **Self-dependency** — `skills.required: '<name>' cannot depend on itself`.
+4. **Cycle** (any length, including through several skills) —
+   `skills.required: dependency cycle detected: a -> b -> c -> a`.
+
+A malformed DAG fails the contract at load time with one of the above, before it's ever checked
+against a trace.
+
+**Checked against a trace** by the `skills_loaded` plugin: ordering is judged by the position
+each skill's *first successful* load occupies in the trace's own ordered list of load events —
+**not** by wall-clock timestamp, since timestamps aren't reliably comparable across the two
+different extraction paths a trace can be built from. This means the check is really "did `dep`
+appear no later than `name` in the sequence of load events," not "did `dep`'s clock time precede
+`name`'s" — practically identical for almost all traces, but stated precisely since it's what
+governs the one genuinely ambiguous case: two skills loaded together in the very same batched
+`load_skill` call (no sub-call ordering signal exists for that) counts as the dependency being
+satisfied, not violated — otherwise a model that correctly batches two intentionally-dependent
+skills into one call could never satisfy the declaration.
+
+An edge "`name` depends_on `dep`" is a claim about relative order between two things that both
+happened, so the two "never loaded" cases are handled differently, not uniformly:
+
+| `dep` loaded ok? | `name` loaded ok? | Result |
+|---|---|---|
+| no | no | Passes (vacuously) — `name` never happened, so there's no order to have violated; `name`'s own missing-skill failure belongs to `skill_not_loaded`, not this check. |
+| no | **yes** | Fails — `name` was acted on despite `dep` never being established. This is the one failure the feature exists to catch. |
+| yes | yes, in order (or tied) | Passes. |
+| yes | yes, out of order | Fails — the order was literally reversed. |
+
+Only the two failing rows above contribute to the aggregate `skill_dependency_order_violated`
+violation — the vacuous case never does, since it isn't a real ordering failure.
+
+### `evidence["skill_dag"]` — structured data for visualization tooling
+
+The `skills_loaded` plugin's result also carries `evidence["skill_dag"]`, a JSON-serializable
+structure intended for future UI tooling to render "expected dependency graph vs. actual load
+sequence, highlighting where they diverge" (data only — no rendering exists in this repo yet):
+
+- `expected`: `{nodes: [<required skill names>], edges: [{from: <dep>, to: <name>}, ...]}` — the
+  declared DAG, independent of any trace.
+- `actual`: `{events: [{position, skill_names, success, timestamp}, ...], first_success_position: {<name>: <position>}}`
+  — the literal ordered timeline of load events observed in the trace.
+- `edge_results`: one entry per declared edge — `{from, to, verdict, from_position, to_position, detail}`,
+  where `verdict` is one of `satisfied` / `violated_order` / `violated_dependency_missing` /
+  `vacuous_dependent_never_loaded` (the four rows of the table above) — everything a renderer
+  needs to color/annotate the expected graph's edges without recomputing any position lookups.
+
+Contracts generated via `generate-contract` never include `depends_on` — inferring a hard
+ordering requirement from one trace's incidental load order would be a false-positive generator,
+not a real signal. Add `depends_on` by hand where a genuine ordering requirement is known.
 
 ---
 

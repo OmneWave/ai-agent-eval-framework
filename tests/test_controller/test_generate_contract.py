@@ -1,9 +1,8 @@
-import pytest
 import yaml
-from pydantic import ValidationError
 
 from wm_agents_validator.controller.generate_contract import generate_contract
 from wm_agents_validator.models.trace_snapshot import SpanRecord, TraceSnapshot
+from wm_agents_validator.models.workflow_contract import WorkflowContract
 
 
 def _contract_dict(yaml_text: str) -> dict:
@@ -11,14 +10,23 @@ def _contract_dict(yaml_text: str) -> dict:
 
 
 def test_generate_contract_from_fixture_snapshot(snapshot):
-    # generate_contract() still emits the pre-genericization shape for pages --
-    # path-less entries nested as page.variable/widget/javascript -- which the
-    # current ResourceRegistry model rejects (every entry needs an explicit `path`,
-    # and there's no more page-specific nesting). Its internal self-check now
-    # raises for any page-touching trace; this documents that known, currently
-    # accepted gap rather than silently expecting a result that can't be produced.
-    with pytest.raises(ValidationError):
-        generate_contract(snapshot, workflow="ui_to_api_binding")
+    result = generate_contract(snapshot, workflow="ui_to_api_binding")
+    data = _contract_dict(result.yaml_text)
+    contract = WorkflowContract.model_validate(data)
+
+    page = next(e for e in contract.resources.page if e.name == "PetTable")
+    assert page.path == "src/main/webapp/pages/PetTable/PetTable.html"
+    assert page.variable[0].path == "src/main/webapp/pages/PetTable/PetTable.variables.json"
+    assert page.javascript[0].path == "src/main/webapp/pages/PetTable/PetTable.js"
+
+    output_refs = {e.resource for e in contract.output if hasattr(e, "resource")}
+    assert "page.PetTable" in output_refs
+    assert any(ref.startswith("page.PetTable.variable.") for ref in output_refs)
+    assert any(ref.startswith("page.PetTable.javascript.") for ref in output_refs)
+
+    for entry in contract.output:
+        if hasattr(entry, "resource"):
+            contract.resources.resolve(entry.resource)
 
 
 def test_generate_contract_variable_via_platform_tool_only():
@@ -58,11 +66,17 @@ def test_generate_contract_variable_via_platform_tool_only():
         ],
     )
 
-    # Same known gap as test_generate_contract_from_fixture_snapshot -- this trace
-    # touches a page, so generate_contract()'s emitted path-less/nested shape fails
-    # the current ResourceRegistry model's self-check.
-    with pytest.raises(ValidationError):
-        generate_contract(trace, workflow="screenshot_to_code")
+    result = generate_contract(trace, workflow="screenshot_to_code")
+    data = _contract_dict(result.yaml_text)
+    contract = WorkflowContract.model_validate(data)
+
+    page = next(e for e in contract.resources.page if e.name == "RegisterCompany")
+    assert page.variable[0].name == "companyOptions"
+    assert page.variable[0].path == "src/main/webapp/pages/RegisterCompany/RegisterCompany.variables.json"
+
+    output_refs = {e.resource for e in contract.output if hasattr(e, "resource")}
+    assert "page.RegisterCompany.variable.companyOptions" in output_refs
+    contract.resources.resolve("page.RegisterCompany.variable.companyOptions")
 
 
 def test_generate_contract_slugifies_design_token_overrides():
@@ -130,8 +144,49 @@ def test_generate_contract_warns_on_unclassifiable_path():
 
 
 def test_generate_contract_output_is_load_bearing_yaml(snapshot, tmp_path):
-    # Same known gap as test_generate_contract_from_fixture_snapshot -- the fixture
-    # snapshot touches a page, so this never reaches the load-bearing-round-trip
-    # check it was meant to exercise.
-    with pytest.raises(ValidationError):
-        generate_contract(snapshot, workflow="ui_to_api_binding")
+    result = generate_contract(snapshot, workflow="ui_to_api_binding")
+    out_file = tmp_path / "generated.yaml"
+    out_file.write_text(result.yaml_text, encoding="utf-8")
+
+    data = yaml.safe_load(out_file.read_text(encoding="utf-8"))
+    contract = WorkflowContract.model_validate(data)
+    for entry in contract.output:
+        if hasattr(entry, "resource"):
+            contract.resources.resolve(entry.resource)
+
+
+def test_generate_contract_emits_tool_check_for_pathless_mutation():
+    # ui_applyChangesOnPageMarkup edits inline markup with no separate file
+    # written -- it can't become a path-based WriteSpec, so it should surface as
+    # a standalone ToolCheck (tool + match) output entry instead of only being
+    # listed flatly in tools.required.
+    trace = TraceSnapshot(
+        trace_id="t4",
+        entry_agent="wm_agent",
+        status="success",
+        skill_loads=[],
+        spans=[
+            SpanRecord(
+                id="s1",
+                name="execute_tool",
+                type="TOOL",
+                parent_id=None,
+                agent_id="wm_agent",
+                input={
+                    "tool_name": "ui_applyChangesOnPageMarkup",
+                    "tool_args": {"pageName": "PetTable", "change": "replace"},
+                },
+                output=None,
+                success=True,
+            ),
+        ],
+    )
+
+    result = generate_contract(trace, workflow="ui_to_api_binding")
+    data = _contract_dict(result.yaml_text)
+    contract = WorkflowContract.model_validate(data)
+
+    tool_checks = [e for e in contract.output if hasattr(e, "tool")]
+    assert len(tool_checks) == 1
+    assert tool_checks[0].tool == "execute_tool.ui_applyChangesOnPageMarkup"
+    assert tool_checks[0].match[0].fields == {"pageName": "PetTable"}

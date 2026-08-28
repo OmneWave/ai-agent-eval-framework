@@ -214,7 +214,10 @@ workflow: string                    # required
 contract_version: string            # required
 
 skills:
-  required: string | [string]         # skill(s) that must load and succeed
+  required: string | [string] | [{name: string, depends_on: [string]}]
+                                       # skill(s) that must load and succeed; an entry may declare
+                                       # depends_on (other required skills that must load-and-succeed
+                                       # first, forming a DAG) -- see CONTRACT_SPEC.md § Skills
   optional: [string]                  # may or may not load; never required, never flagged as extra
 
 knowledge: [string]                 # proprietary/catalog reference paths -- always fine to read,
@@ -305,7 +308,7 @@ without a separate `operationId`/`class`+`method`/`table_name`+`column_name` fie
 
 | Plugin | Checks |
 |--------|--------|
-| `skills_loaded` | Required skill(s) loaded and succeeded, and no extra skills were loaded beyond the declared `required`/`optional` sets. |
+| `skills_loaded` | Required skill(s) loaded and succeeded, no extra skills were loaded beyond the declared `required`/`optional` sets, and any declared `depends_on` order between required skills was respected in the trace. |
 | `input_context` | Each declared path-based `input_context[]` entry must have its resolved resource actually read, and its `terms` plus any qualifier terms parsed from the reference must appear in some tool-call input or output. A standalone `ToolCheck` entry (`tool:` + `match:`) instead requires a matching call to that tool anywhere in the trace, independent of any path. The plugin also reports unrelated reads outside the declared resource/knowledge scope. |
 | `tool_calls` | The contract-wide `tools` policy is enforced: every `required` tool must appear in the trace and no `forbidden` tool may appear. |
 | `output` | Each declared path-based `output[]` entry must be created/updated/deleted as specified, and no unrelated file changes are allowed outside the declared output scope. A `match` clause, if present, additionally requires the resource's properties (e.g. which operation it's bound to) to be verified on the same call that created/updated it -- for resources whose exact name isn't dictated by the task. A standalone `ToolCheck` entry (`tool:` + `match:`) instead requires a matching call to that tool anywhere in the trace, independent of any path, and does not contribute to output's allowed-change scope. |

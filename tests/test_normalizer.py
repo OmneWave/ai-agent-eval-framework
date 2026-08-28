@@ -14,7 +14,7 @@ FULL_RAW_TRACE = Path(__file__).parent.parent / "trace-artifacts" / "c4739a2868e
 
 def test_load_contract(contract):
     assert contract.workflow == "ui_to_api_binding"
-    assert contract.skills.required[0] == "ui_to_api_binding_workflow"
+    assert contract.skills.required[0].name == "ui_to_api_binding_workflow"
     assert contract.resources.api[0].name == "petstore"
 
 
