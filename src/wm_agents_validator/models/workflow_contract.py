@@ -319,6 +319,29 @@ class ToolCheck(HasMatchClauses):
     tool: str
 
 
+class ToolCheck(HasMatchClauses):
+    """A standalone, independent assertion: "this exact tool call happened,
+    somewhere in the trace, carrying this exact content" -- with no
+    connection to any ``resource:``/path at all. Lives as its own entry
+    alongside ``ReadSpec``/``WriteSpec`` entries in ``input_context``/
+    ``output`` (see ``WorkflowContract``), for a tool that addresses whatever
+    it acts on by an identifier or other structured argument rather than a
+    literal file path the framework could extract and compare against
+    ``resources``' registered path.
+
+    ``tool`` is a plain name, or a dot-separated chain describing a wrapper
+    call and what it invoked (e.g. ``execute_tool.ui_applyChangesOnPageMarkup``)
+    -- resolved generically by ``resolve_dotted_tool_calls``
+    (``models/trace_snapshot.py``), which has no built-in knowledge of any
+    specific tool's name; the chain is entirely up to the contract author.
+
+    ``match`` (see ``HasMatchClauses``) is empty by default, meaning any call
+    to ``tool`` counts.
+    """
+
+    tool: str
+
+
 class ReadSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
