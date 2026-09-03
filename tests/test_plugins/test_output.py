@@ -1,6 +1,6 @@
 from wm_agents_validator.models.trace_snapshot import SpanRecord
 from wm_agents_validator.models.trace_snapshot import match_satisfied as _match_satisfied_clauses
-from wm_agents_validator.models.workflow_contract import MatchClause, WriteSpec
+from wm_agents_validator.models.workflow_contract import MatchClause, ToolCheck, WriteSpec
 from wm_agents_validator.plugins.output import OutputPlugin
 
 
@@ -92,6 +92,42 @@ def test_output_flags_unrelated_file_changed(snapshot, contract):
 
     violation = next(v for v in result.violations if v.code == "unrelated_file_changed")
     assert violation.resource == "unrelated changes"
+
+
+def test_output_does_not_flag_change_matching_tool_check_match_value(snapshot, contract):
+    # A file changed via a write whose path is only declared through a
+    # ToolCheck's own `match:` value (not any `resource:` entry) shouldn't be
+    # flagged as unrelated -- writing that literal path already declares it
+    # as an expected change target.
+    contract_with_tool_check = contract.model_copy(
+        update={
+            "output": [
+                *contract.output,
+                ToolCheck(tool="write_file", match=[["src/main/webapp/pages/OtherPage/OtherPage.html"]]),
+            ]
+        }
+    )
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-write-declared-via-tool-check",
+            name="write_file",
+            type="TOOL",
+            parent_id="span-deleg-ui",
+            agent_id="wm_ui_expert",
+            timestamp="2026-01-01T10:00:13Z",
+            end_time=None,
+            level="DEFAULT",
+            input={"file_path": "src/main/webapp/pages/OtherPage/OtherPage.html"},
+            output=None,
+            success=True,
+        )
+    )
+
+    result = OutputPlugin().evaluate(snapshot, contract_with_tool_check)
+
+    codes = [v.code for v in result.violations]
+    assert "unrelated_file_changed" not in codes
+    assert result.evidence["checks"]["unrelated changes"]["passed"] is True
 
 
 def _variable_contract_with_match(contract, match):

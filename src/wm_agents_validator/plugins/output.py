@@ -11,7 +11,12 @@ from wm_agents_validator.models.trace_snapshot import (
     matching_tool_calls,
     unwrap_execute_tool,
 )
-from wm_agents_validator.models.workflow_contract import ToolCheck, WorkflowContract
+from wm_agents_validator.models.workflow_contract import (
+    ExactMatchClause,
+    SubstringMatchClause,
+    ToolCheck,
+    WorkflowContract,
+)
 from wm_agents_validator.plugins.timing import fmt_ms, is_output_generation_tool, sum_duration_ms
 
 _OPERATION_TO_FILE_CHANGE_OPS: dict[str, set[str]] = {
@@ -19,6 +24,31 @@ _OPERATION_TO_FILE_CHANGE_OPS: dict[str, set[str]] = {
     "UPDATE": {"write", "edit"},
     "DELETE": {"delete"},
 }
+
+
+def _tool_check_path_patterns(tool_checks: list[ToolCheck]) -> list[str]:
+    """Literal string values out of every ``ToolCheck.match`` clause, treated
+    as additional "allowed" path patterns for the unrelated-changes check --
+    a contract that already asserts ``tool: edit_file_content`` /
+    ``match: [".../Login.js"]`` has, by writing that literal path, declared
+    it as an expected change target; it shouldn't also be flagged as an
+    undeclared/unrelated write. Only ``SubstringMatchClause``/
+    ``ExactMatchClause`` values are usable this way (each is a literal
+    string) -- a ``RegexMatchClause`` pattern isn't a literal path, so it's
+    skipped. A non-path value (e.g. a locale code, a page name) is harmless
+    here: the unrelated-changes check only matches it against an
+    actually-changed path via exact/glob comparison, so it can't
+    accidentally whitelist something unrelated. Mirrors
+    ``InputContextPlugin._tool_check_path_patterns``.
+    """
+    patterns: list[str] = []
+    for check in tool_checks:
+        for clause in check.match:
+            if isinstance(clause, SubstringMatchClause):
+                patterns.extend(clause.values)
+            elif isinstance(clause, ExactMatchClause):
+                patterns.extend(str(v) for v in clause.fields.values())
+    return patterns
 
 
 class OutputPlugin:
@@ -29,7 +59,11 @@ class OutputPlugin:
     ``output`` is the exhaustive scope of what's allowed to change -- a
     resource that's only ever referenced under ``input_context`` (never
     ``output``) is automatically protected, since any change to it is caught
-    by the unrelated-diff check below.
+    by the unrelated-diff check below. A ``ToolCheck``'s own ``match:``
+    literal values also count as declared/allowed for this check (see
+    ``_tool_check_path_patterns``) -- a change already asserted via
+    ``tool: edit_file_content`` / ``match: [...]`` shouldn't also be flagged
+    as unrelated.
 
     A ``WriteSpec.match`` clause (only checked when non-empty) additionally
     requires that the *same* write-tool call whose input matched the resolved
@@ -70,6 +104,7 @@ class OutputPlugin:
         checks: dict[str, dict] = {}
         changed_paths = {fc.path for fc in snapshot.file_changes}
         allowed_patterns: list[str] = []
+        tool_checks = [entry for entry in contract.output if isinstance(entry, ToolCheck)]
 
         for entry in contract.output:
             if isinstance(entry, ToolCheck):
@@ -145,7 +180,12 @@ class OutputPlugin:
                     )
                 )
 
-        unrelated = [path for path in changed_paths if not any(glob_match(p, path) or path == p for p in allowed_patterns)]
+        allowed_patterns_with_tool_checks = allowed_patterns + _tool_check_path_patterns(tool_checks)
+        unrelated = [
+            path
+            for path in changed_paths
+            if not any(glob_match(p, path) or path == p for p in allowed_patterns_with_tool_checks)
+        ]
 
         unrelated_label = "unrelated changes"
         if unrelated:
@@ -159,7 +199,7 @@ class OutputPlugin:
                     message=f"Files changed outside contract scope: {unrelated}",
                     plugin=self.name,
                     resource=unrelated_label,
-                    evidence={"unrelated_paths": unrelated, "allowed_patterns": allowed_patterns},
+                    evidence={"unrelated_paths": unrelated, "allowed_patterns": allowed_patterns_with_tool_checks},
                 )
             )
         else:
@@ -188,7 +228,7 @@ class OutputPlugin:
             violations=violations,
             evidence={
                 "changed_paths": sorted(changed_paths),
-                "allowed_patterns": allowed_patterns,
+                "allowed_patterns": allowed_patterns_with_tool_checks,
                 "checks": checks,
             },
         )
