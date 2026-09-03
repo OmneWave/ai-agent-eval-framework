@@ -1,4 +1,5 @@
 from wm_agents_validator.models.trace_snapshot import SpanRecord
+from wm_agents_validator.models.workflow_contract import ToolCheck
 from wm_agents_validator.plugins.input_context import InputContextPlugin
 
 _RESOURCE = "api.petstore.petstore_findPetsByTags"
@@ -336,3 +337,36 @@ def test_input_context_ignores_search_tools_for_unrelated_check(snapshot, contra
     result = InputContextPlugin().evaluate(snapshot, contract)
     assert result.evidence["unrelated_reads"] == []
     assert result.score == 1.0
+
+
+def test_input_context_does_not_flag_reads_matching_tool_check_match_value(snapshot, contract):
+    # A read whose path is only declared via a ToolCheck's own `match:` value
+    # (not via any `resource:` entry) shouldn't be flagged as scope creep --
+    # writing that literal path already declares it as expected context.
+    contract_with_tool_check = contract.model_copy(
+        update={
+            "input_context": [
+                *contract.input_context,
+                ToolCheck(tool="read_files", match=[["src/main/webapp/pages/OtherPage/OtherPage.html"]]),
+            ]
+        }
+    )
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-read-declared-via-tool-check",
+            name="read_files",
+            type="TOOL",
+            parent_id="span-deleg-ui",
+            agent_id="wm_ui_expert",
+            timestamp="2026-01-01T10:00:11Z",
+            end_time=None,
+            level="DEFAULT",
+            input={"file_paths": ["src/main/webapp/pages/OtherPage/OtherPage.html"]},
+            output=None,
+            success=True,
+        )
+    )
+    result = InputContextPlugin().evaluate(snapshot, contract_with_tool_check)
+    assert result.evidence["unrelated_reads"] == []
+    codes = [v.code for v in result.violations]
+    assert "unrelated_context_fetched" not in codes

@@ -257,6 +257,33 @@ class WaveMakerContractGenerator(ContractGenerator):
                 return str(name)
         return None
 
+    @staticmethod
+    def _called_tool_names(snapshot: TraceSnapshot) -> list[str]:
+        """Every tool actually invoked in the trace, computed directly from
+        ``snapshot.spans`` rather than trusting ``snapshot.tools_summary`` --
+        mirrors ``_build_tools_summary`` (``trace/normalizer.py``) exactly,
+        but doesn't depend on that normalization step having already run
+        (e.g. a ``TraceSnapshot`` assembled some other way, with
+        ``tools_summary`` left at its empty default). A wrapper call's own
+        name (``execute_tool``) is kept alongside the ``tool_name`` it
+        dispatched to, so both show up in ``tools.required`` -- a required
+        MCP/platform tool reached only through the wrapper is never missed.
+        """
+        called: list[str] = []
+        seen: set[str] = set()
+        for span in snapshot.spans:
+            if span.type != "TOOL":
+                continue
+            raw_base = _span_base_name(span.name)
+            if raw_base not in seen:
+                called.append(raw_base)
+                seen.add(raw_base)
+            base_name, _ = unwrap_execute_tool(raw_base, span.input or {})
+            if base_name != raw_base and base_name not in seen:
+                called.append(base_name)
+                seen.add(base_name)
+        return called
+
     def _tool_check_entries(self, snapshot: TraceSnapshot) -> list[_ToolCheckEntry]:
         """Mutation-shaped tool calls with no discoverable file path (e.g. an
         "apply changes to this markup" style call) can't become a path-based
@@ -406,7 +433,7 @@ class WaveMakerContractGenerator(ContractGenerator):
         if not output_entries and not tool_check_entries:
             warnings.append("No file writes/edits observed in this trace -- `output` is empty; this contract can't verify much.")
 
-        tools_required = sorted(snapshot.tools_summary.called)
+        tools_required = sorted(self._called_tool_names(snapshot))
 
         yaml_text = _render_yaml(
             workflow=workflow,
