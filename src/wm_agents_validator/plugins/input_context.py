@@ -12,7 +12,12 @@ from wm_agents_validator.models.trace_snapshot import (
     extract_paths_from_input,
     matching_tool_calls,
 )
-from wm_agents_validator.models.workflow_contract import ToolCheck, WorkflowContract
+from wm_agents_validator.models.workflow_contract import (
+    ExactMatchClause,
+    SubstringMatchClause,
+    ToolCheck,
+    WorkflowContract,
+)
 from wm_agents_validator.plugins.timing import INPUT_GATHERING_TOOLS, fmt_ms, sum_duration_ms
 
 SpanIndexEntry = tuple[SpanRecord, list[str], str, str]
@@ -54,8 +59,9 @@ class InputContextPlugin:
 
     It also checks the inverse direction: files read via ``read_files`` that
     don't match any resource declared under ``input_context`` or ``output``
-    (nor exempted via ``knowledge``). This surfaces scope creep -- but only as
-    a real failure when the contract's ``input_context``/``knowledge`` are
+    (nor exempted via ``knowledge`` or a ``ToolCheck``'s own ``match`` values --
+    see ``_tool_check_path_patterns``). This surfaces scope creep -- but only
+    as a real failure when the contract's ``input_context``/``knowledge`` are
     non-empty (i.e. it actually declared some context expectation to have
     crept out of); with both empty, unrelated reads are reported
     informationally only, never as a failure -- see the "Scope declared"
@@ -185,7 +191,13 @@ class InputContextPlugin:
         output_found, output_missing, output_locations = self._check_terms(output_qualifier_terms, span_index)
 
         knowledge_patterns = list(contract.knowledge)
-        unrelated_reads = self._find_unrelated_reads(all_expected_paths + knowledge_patterns, span_index)
+        tool_check_entries = [e for e in contract.input_context if isinstance(e, ToolCheck)] + [
+            w for w in contract.output if isinstance(w, ToolCheck)
+        ]
+        tool_check_patterns = self._tool_check_path_patterns(tool_check_entries)
+        unrelated_reads = self._find_unrelated_reads(
+            all_expected_paths + knowledge_patterns + tool_check_patterns, span_index
+        )
 
         # Scope creep is only a meaningful failure when the contract actually
         # declared some context expectation to have crept out of. A contract
@@ -222,6 +234,7 @@ class InputContextPlugin:
                         "unrelated_paths": unrelated_reads,
                         "expected_paths": sorted(set(all_expected_paths)),
                         "knowledge": sorted(set(knowledge_patterns)),
+                        "tool_check_patterns": sorted(set(tool_check_patterns)),
                     },
                 )
             )
@@ -276,6 +289,30 @@ class InputContextPlugin:
                 "checks": checks,
             },
         )
+
+    def _tool_check_path_patterns(self, tool_checks: list[ToolCheck]) -> list[str]:
+        """Literal string values out of every ``ToolCheck.match`` clause (in
+        both ``input_context`` and ``output``), treated as additional
+        "declared" path patterns for the scope-creep check -- a contract that
+        already asserts ``tool: read_files`` / ``match: [".../Login.js"]``
+        has, by writing that literal path, declared it as expected context;
+        it shouldn't also be flagged as an undeclared/unrelated read. Only
+        ``SubstringMatchClause``/``ExactMatchClause`` values are usable this
+        way (each is a literal string) -- a ``RegexMatchClause`` pattern isn't
+        a literal path, so it's not a reliable source of one and is skipped.
+        A non-path value (e.g. a locale code, a page name) is harmless here:
+        ``_paths_match`` only matches it against an actually-observed read
+        path via exact/glob comparison, so it can't accidentally whitelist
+        something unrelated.
+        """
+        patterns: list[str] = []
+        for check in tool_checks:
+            for clause in check.match:
+                if isinstance(clause, SubstringMatchClause):
+                    patterns.extend(clause.values)
+                elif isinstance(clause, ExactMatchClause):
+                    patterns.extend(str(v) for v in clause.fields.values())
+        return patterns
 
     def _find_unrelated_reads(self, expected_patterns: list[str], span_index: list[SpanIndexEntry]) -> list[str]:
         """Files pulled into context via read_files that match no declared resource/knowledge path."""
