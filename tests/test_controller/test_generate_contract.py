@@ -190,3 +190,45 @@ def test_generate_contract_emits_tool_check_for_pathless_mutation():
     assert len(tool_checks) == 1
     assert tool_checks[0].tool == "execute_tool.ui_applyChangesOnPageMarkup"
     assert tool_checks[0].match[0].fields == {"pageName": "PetTable"}
+
+
+def test_generate_contract_populates_tools_required_from_spans_directly():
+    # Regression: tools.required must not depend on snapshot.tools_summary
+    # having been pre-populated by the trace normalizer -- a TraceSnapshot
+    # assembled any other way (tools_summary left at its empty default)
+    # should still surface every tool actually called, including a tool_name
+    # invoked indirectly through execute_tool's dispatcher shape.
+    trace = TraceSnapshot(
+        trace_id="t5",
+        entry_agent="wm_agent",
+        status="success",
+        skill_loads=[],
+        spans=[
+            SpanRecord(
+                id="s1",
+                name="write_file",
+                type="TOOL",
+                parent_id=None,
+                agent_id="wm_agent",
+                input={"file_path": "src/main/webapp/pages/Login/Login.html"},
+                output=None,
+                success=True,
+            ),
+            SpanRecord(
+                id="s2",
+                name="execute_tool",
+                type="TOOL",
+                parent_id=None,
+                agent_id="wm_agent",
+                input={"tool_name": "platform_addLocale", "tool_args": {"locale": "es"}},
+                output=None,
+                success=True,
+            ),
+        ],
+    )
+    assert trace.tools_summary.called == []  # not pre-populated -- the case this guards against
+
+    result = generate_contract(trace, workflow="i18n_Login")
+    data = _contract_dict(result.yaml_text)
+
+    assert set(data["tools"]["required"]) == {"write_file", "execute_tool", "platform_addLocale"}
