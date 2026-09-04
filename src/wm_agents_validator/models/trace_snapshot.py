@@ -212,9 +212,19 @@ class TraceSnapshot(BaseModel):
 
     @property
     def file_changes(self) -> list[FileChangeRecord]:
+        """A call that *attempted* a write/edit/delete but failed
+        (``span.success is False``) never actually changed anything, so it's
+        excluded here -- otherwise a failed ``write_file`` call would still
+        register as a real change, making ``OutputPlugin`` credit a
+        declared write that never happened, or flag the same path as
+        "unrelated"/out-of-scope for a change that was never real to begin
+        with. ``None``/unset stays permissive (not every tool sets
+        ``success`` explicitly), matching ``InputContextPlugin._check_paths``'s
+        same convention.
+        """
         changes: list[FileChangeRecord] = []
         for span in self.spans:
-            if span.type != "TOOL":
+            if span.type != "TOOL" or span.success is False:
                 continue
             base_name, tool_input = unwrap_execute_tool(_span_base_name(span.name), span.input or {})
             if base_name not in FILE_WRITE_TOOLS:
@@ -225,7 +235,7 @@ class TraceSnapshot(BaseModel):
                     FileChangeRecord(path=path, operation=operation, tool_name=base_name)
                 )
         for span in self.spans:
-            if span.type != "TOOL":
+            if span.type != "TOOL" or span.success is False:
                 continue
             base_name, tool_input = unwrap_execute_tool(_span_base_name(span.name), span.input or {})
             if base_name not in VARIABLE_CREATE_TOOLS:
@@ -390,11 +400,17 @@ def resolve_dotted_tool_calls(spans: list[SpanRecord], dotted_tool: str) -> list
 
     A one-segment reference (no dots) matches the span directly, with no
     descent at all.
+
+    A call that *attempted* the match but failed (``span.success is False``)
+    is excluded -- seeing the right arguments in a call that then errored out
+    isn't evidence the change/action actually happened, the same reasoning
+    ``TraceSnapshot.file_changes`` and ``InputContextPlugin._check_paths``
+    apply to path-based evidence. ``None``/unset stays permissive.
     """
     segments = dotted_tool.split(".")
     resolved: list[dict[str, Any]] = []
     for span in spans:
-        if span.type != "TOOL":
+        if span.type != "TOOL" or span.success is False:
             continue
         if _span_base_name(span.name) != segments[0]:
             continue

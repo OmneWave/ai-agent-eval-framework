@@ -94,6 +94,35 @@ def test_output_flags_unrelated_file_changed(snapshot, contract):
     assert violation.resource == "unrelated changes"
 
 
+def test_output_does_not_flag_unrelated_change_when_every_attempt_failed(snapshot, contract):
+    # Regression: every tool call that touched OtherPage.html errored out
+    # (span.success is False) -- the file was never actually modified, so it
+    # must not be reported as an "unrelated change" just because a failed
+    # call's arguments named that path.
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-write-unrelated-failed",
+            name="write_file",
+            type="TOOL",
+            parent_id="span-deleg-ui",
+            agent_id="wm_ui_expert",
+            timestamp="2026-01-01T10:00:13Z",
+            end_time=None,
+            level="DEFAULT",
+            input={"file_path": "src/main/webapp/pages/OtherPage/OtherPage.html"},
+            output=None,
+            success=False,
+        )
+    )
+
+    result = OutputPlugin().evaluate(snapshot, contract)
+
+    codes = [v.code for v in result.violations]
+    assert "unrelated_file_changed" not in codes
+    assert result.evidence["checks"]["unrelated changes"]["passed"] is True
+    assert "OtherPage.html" not in result.evidence["changed_paths"]
+
+
 def test_output_does_not_flag_change_matching_tool_check_match_value(snapshot, contract):
     # A file changed via a write whose path is only declared through a
     # ToolCheck's own `match:` value (not any `resource:` entry) shouldn't be
