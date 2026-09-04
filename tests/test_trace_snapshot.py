@@ -1,4 +1,9 @@
-from wm_agents_validator.models.trace_snapshot import extract_paths_from_input
+from wm_agents_validator.models.trace_snapshot import (
+    SpanRecord,
+    TraceSnapshot,
+    extract_paths_from_input,
+    resolve_dotted_tool_calls,
+)
 
 
 # ── Schema-accurate extraction, keyed by real tool name ──────────────────────
@@ -93,3 +98,105 @@ def test_known_tool_with_missing_field_still_falls_back():
 def test_extract_paths_from_input_empty():
     assert extract_paths_from_input({}) == []
     assert extract_paths_from_input({}, "read_files") == []
+
+
+# ── A failed tool call never counts as a real change/match ──────────────────
+# Seeing the right path/arguments in a call that then errored out isn't
+# evidence the write/tool-invocation actually happened.
+
+def test_file_changes_excludes_failed_write_call():
+    snapshot = TraceSnapshot(
+        trace_id="t1",
+        entry_agent="a",
+        status="success",
+        skill_loads=[],
+        spans=[
+            SpanRecord(
+                id="s1",
+                name="write_file",
+                type="TOOL",
+                parent_id=None,
+                agent_id="a",
+                input={"file_path": "src/main/webapp/pages/Login/Login.html"},
+                output=None,
+                success=False,
+            ),
+        ],
+    )
+    assert snapshot.file_changes == []
+
+
+def test_file_changes_includes_successful_write_call():
+    snapshot = TraceSnapshot(
+        trace_id="t2",
+        entry_agent="a",
+        status="success",
+        skill_loads=[],
+        spans=[
+            SpanRecord(
+                id="s1",
+                name="write_file",
+                type="TOOL",
+                parent_id=None,
+                agent_id="a",
+                input={"file_path": "src/main/webapp/pages/Login/Login.html"},
+                output=None,
+                success=True,
+            ),
+        ],
+    )
+    assert [fc.path for fc in snapshot.file_changes] == ["src/main/webapp/pages/Login/Login.html"]
+
+
+def test_file_changes_permissive_when_success_unset():
+    snapshot = TraceSnapshot(
+        trace_id="t3",
+        entry_agent="a",
+        status="success",
+        skill_loads=[],
+        spans=[
+            SpanRecord(
+                id="s1",
+                name="write_file",
+                type="TOOL",
+                parent_id=None,
+                agent_id="a",
+                input={"file_path": "src/main/webapp/pages/Login/Login.html"},
+                output=None,
+                success=None,
+            ),
+        ],
+    )
+    assert [fc.path for fc in snapshot.file_changes] == ["src/main/webapp/pages/Login/Login.html"]
+
+
+def test_resolve_dotted_tool_calls_excludes_failed_span():
+    spans = [
+        SpanRecord(
+            id="s1",
+            name="execute_tool",
+            type="TOOL",
+            parent_id=None,
+            agent_id="a",
+            input={"tool_name": "ui_applyChangesOnPageMarkup", "tool_args": {"pageName": "Login"}},
+            output=None,
+            success=False,
+        ),
+    ]
+    assert resolve_dotted_tool_calls(spans, "execute_tool.ui_applyChangesOnPageMarkup") == []
+
+
+def test_resolve_dotted_tool_calls_includes_successful_span():
+    spans = [
+        SpanRecord(
+            id="s1",
+            name="execute_tool",
+            type="TOOL",
+            parent_id=None,
+            agent_id="a",
+            input={"tool_name": "ui_applyChangesOnPageMarkup", "tool_args": {"pageName": "Login"}},
+            output=None,
+            success=True,
+        ),
+    ]
+    assert resolve_dotted_tool_calls(spans, "execute_tool.ui_applyChangesOnPageMarkup") == [{"pageName": "Login"}]

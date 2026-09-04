@@ -86,7 +86,10 @@ class OutputPlugin:
     knowledge of any specific tool's name), and fails otherwise. It proves
     nothing about a resource's create/update/delete state; it's its own
     pass/fail check, for a tool whose args carry no file path the framework
-    could compare against ``resources``' registered path.
+    could compare against ``resources``' registered path. A call that errored
+    out (``span.success is False``) never counts as a match here -- seeing
+    the right arguments in a failed call isn't evidence the action actually
+    happened (``resolve_dotted_tool_calls`` enforces this).
 
     Every check must pass for ``passed=True`` -- no partial credit (see the
     Scoring section of the contract schema).
@@ -139,7 +142,7 @@ class OutputPlugin:
             if write.match:  # falsy for both {} and [] -- no special-casing needed
                 evidencing_calls: list[tuple[str, dict]] = []
                 for span in snapshot.spans:
-                    if span.type != "TOOL":
+                    if span.type != "TOOL" or span.success is False:
                         continue
                     name, tool_input = unwrap_execute_tool(_span_base_name(span.name), span.input or {})
                     if not is_output_generation_tool(name):
