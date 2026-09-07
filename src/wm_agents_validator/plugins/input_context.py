@@ -315,11 +315,19 @@ class InputContextPlugin:
         return patterns
 
     def _find_unrelated_reads(self, expected_patterns: list[str], span_index: list[SpanIndexEntry]) -> list[str]:
-        """Files pulled into context via read_files that match no declared resource/knowledge path."""
+        """Files pulled into context via read_files that match no declared resource/knowledge path.
+
+        A call that errored out (``span.success is False``) is excluded --
+        the read never actually delivered any content, so it isn't real
+        scope creep, only a failed attempt (matches the same convention
+        ``_check_paths``/``TraceSnapshot.file_changes``/
+        ``resolve_dotted_tool_calls`` already apply elsewhere). ``None``/unset
+        stays permissive.
+        """
         seen: set[str] = set()
         unrelated: set[str] = set()
         for span, paths, _input_blob, _output_blob in span_index:
-            if _span_base_name(span.name) != _CONTEXT_READ_TOOL:
+            if _span_base_name(span.name) != _CONTEXT_READ_TOOL or span.success is False:
                 continue
             for path in paths:
                 if path in seen:
