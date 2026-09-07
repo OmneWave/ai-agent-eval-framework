@@ -200,3 +200,41 @@ def test_resolve_dotted_tool_calls_includes_successful_span():
         ),
     ]
     assert resolve_dotted_tool_calls(spans, "execute_tool.ui_applyChangesOnPageMarkup") == [{"pageName": "Login"}]
+
+
+# ── A path-bearing argument JSON-encoded as a string (instead of a real
+# list/dict) must still be parsed into individual real paths, not stringified
+# whole into one opaque blob that can never match a declared resource. ───────
+
+def test_read_files_recovers_paths_from_json_encoded_file_paths_string():
+    # Real malformed shape: file_paths arrived as a JSON string of
+    # {"path": ...} objects instead of an actual list.
+    tool_input = {
+        "file_paths": (
+            '[{"path": "src/main/webapp/pages/PetTable/PetTable.html"}, '
+            '{"path": "src/main/webapp/pages/PetTable/PetTable.variables.json"}, '
+            '{"path": "src/main/webapp/pages/PetTable/PetTable.js"}]'
+        )
+    }
+    assert extract_paths_from_input(tool_input, "read_files") == [
+        "src/main/webapp/pages/PetTable/PetTable.html",
+        "src/main/webapp/pages/PetTable/PetTable.variables.json",
+        "src/main/webapp/pages/PetTable/PetTable.js",
+    ]
+
+
+def test_read_files_recovers_paths_from_json_encoded_plain_string_list():
+    tool_input = {"file_paths": '["a.html", "b.js"]'}
+    assert extract_paths_from_input(tool_input, "read_files") == ["a.html", "b.js"]
+
+
+def test_read_files_leaves_non_json_string_untouched():
+    # Not JSON at all -- must fall back to treating it as one literal path,
+    # same as before, rather than raising or silently dropping it.
+    tool_input = {"file_paths": "not-json-at-all.html"}
+    assert extract_paths_from_input(tool_input, "read_files") == ["not-json-at-all.html"]
+
+
+def test_read_files_leaves_malformed_json_looking_string_untouched():
+    tool_input = {"file_paths": "[this is not valid json"}
+    assert extract_paths_from_input(tool_input, "read_files") == ["[this is not valid json"]

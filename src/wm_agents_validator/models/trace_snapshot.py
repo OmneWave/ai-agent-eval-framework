@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Literal
 
@@ -294,6 +295,31 @@ _TOOL_PATH_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _maybe_parse_json(value: Any) -> Any:
+    """Some calls arrive with a path-bearing argument JSON-encoded as a
+    *string* instead of the real list/dict a well-formed call would carry
+    (confirmed via a real trace: the same class of malformed-argument call
+    ``TraceSnapshot.errors`` already surfaces for ``execute_tool`` -- "must be
+    a JSON object, not a string" -- happens for ``read_files``'s ``file_paths``
+    too, just without erroring the span outright). Left uncaught, that string
+    gets stringified whole by ``_coerce_path`` into one opaque "path" that can
+    never match a real declared resource, producing a false-positive
+    scope-creep violation for files that were otherwise legitimately read.
+    Decoding it here, before any path extraction happens, lets the normal
+    list/dict handling below take over -- any format the JSON decodes to is
+    then handled the same as if it had arrived as real structured data.
+    """
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if stripped[:1] not in "[{":
+        return value
+    try:
+        return json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return value
+
+
 def _coerce_path(value: Any) -> str:
     """A path-bearing list item is normally a plain string, but some tool schema
     variants (e.g. ``read_files`` with a per-file ``limit``) wrap it in an object
@@ -321,7 +347,7 @@ def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None =
     if fields:
         paths: list[str] = []
         for key in fields:
-            value = tool_input.get(key)
+            value = _maybe_parse_json(tool_input.get(key))
             if value is None:
                 continue
             if isinstance(value, list):
@@ -335,10 +361,12 @@ def extract_paths_from_input(tool_input: dict[str, Any], tool_name: str | None =
     # MCP/platform tools reached through execute_tool, or unrecognized names).
     paths = []
     for key in ("path", "file_path", "file"):
-        value = tool_input.get(key)
-        if value:
-            paths.append(str(value))
-    files = (
+        value = _maybe_parse_json(tool_input.get(key))
+        if isinstance(value, list):
+            paths.extend(_coerce_path(v) for v in value)
+        elif value:
+            paths.append(_coerce_path(value))
+    files = _maybe_parse_json(
         tool_input.get("paths")
         or tool_input.get("files")
         or tool_input.get("file_paths")

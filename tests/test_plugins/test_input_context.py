@@ -173,6 +173,31 @@ def test_input_context_flags_unrelated_file_read(snapshot, contract):
     assert result.evidence["checks"]["unrelated reads"]["passed"] is False
 
 
+def test_input_context_does_not_flag_unrelated_read_when_call_failed(snapshot, contract):
+    # Regression: a read_files call that errored out never actually
+    # delivered any content, so it isn't real scope creep -- just a failed
+    # attempt.
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-read-unrelated-failed",
+            name="read_files",
+            type="TOOL",
+            parent_id="span-deleg-ui",
+            agent_id="wm_ui_expert",
+            timestamp="2026-01-01T10:00:11Z",
+            end_time=None,
+            level="DEFAULT",
+            input={"file_paths": ["src/main/webapp/pages/OtherPage/OtherPage.html"]},
+            output=None,
+            success=False,
+        )
+    )
+    result = InputContextPlugin().evaluate(snapshot, contract)
+    assert result.evidence["unrelated_reads"] == []
+    codes = [v.code for v in result.violations]
+    assert "unrelated_context_fetched" not in codes
+
+
 def test_input_context_does_not_fail_on_unrelated_reads_when_no_scope_declared(snapshot, contract):
     # Regression: with input_context AND knowledge both empty, the contract
     # has expressed no opinion about what should be read -- an unrelated read
@@ -367,6 +392,39 @@ def test_input_context_does_not_flag_reads_matching_tool_check_match_value(snaps
         )
     )
     result = InputContextPlugin().evaluate(snapshot, contract_with_tool_check)
+    assert result.evidence["unrelated_reads"] == []
+    codes = [v.code for v in result.violations]
+    assert "unrelated_context_fetched" not in codes
+
+
+def test_input_context_recovers_declared_paths_from_json_encoded_file_paths(snapshot, contract):
+    # Regression: a read_files call whose file_paths argument arrived as a
+    # JSON-encoded string (a real malformed shape seen in practice) instead
+    # of a real list must still be parsed into individual paths that can
+    # match declared resources -- not stringified whole into one opaque blob
+    # that can never match anything and gets misreported as scope creep.
+    snapshot.spans.append(
+        SpanRecord(
+            id="span-read-json-encoded-file-paths",
+            name="read_files",
+            type="TOOL",
+            parent_id="span-deleg-ui",
+            agent_id="wm_ui_expert",
+            timestamp="2026-01-01T10:00:11Z",
+            end_time=None,
+            level="DEFAULT",
+            input={
+                "file_paths": (
+                    '[{"path": "src/main/webapp/pages/PetTable/PetTable.html"}, '
+                    '{"path": "src/main/webapp/pages/PetTable/PetTable.variables.json"}, '
+                    '{"path": "src/main/webapp/pages/PetTable/PetTable.js"}]'
+                )
+            },
+            output=None,
+            success=True,
+        )
+    )
+    result = InputContextPlugin().evaluate(snapshot, contract)
     assert result.evidence["unrelated_reads"] == []
     codes = [v.code for v in result.violations]
     assert "unrelated_context_fetched" not in codes
