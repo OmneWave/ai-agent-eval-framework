@@ -489,8 +489,8 @@ def _render_yaml(
             for name in sorted(pages):
                 page_draft = pages[name]
                 lines.append(f"    - name: {_scalar(name)}")
-                if page_draft.path:
-                    lines.append(f"      path: {_scalar(page_draft.path)}")
+                path = page_draft.path or f"src/main/webapp/pages/{name}/{name}.html"
+                lines.append(f"      path: {_scalar(path)}")
                 if page_draft.variable:
                     lines.append("      variable:")
                     for var_name in sorted(page_draft.variable):

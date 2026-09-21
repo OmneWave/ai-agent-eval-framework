@@ -192,6 +192,38 @@ def test_generate_contract_emits_tool_check_for_pathless_mutation():
     assert tool_checks[0].match[0].fields == {"pageName": "PetTable"}
 
 
+def test_generate_contract_page_path_defaults_when_html_never_written():
+    # Regression: a page touched only via its .variables.json (no accompanying
+    # page.html write/edit anywhere in the trace) previously left `_PageDraft.path`
+    # unset, so the rendered `resources.page` entry had no `path:` line at all --
+    # `ResourceEntry.path` is required, so `_self_check()` crashed on its own output.
+    trace = TraceSnapshot(
+        trace_id="t6",
+        entry_agent="wm_agent",
+        status="success",
+        skill_loads=[],
+        spans=[
+            SpanRecord(
+                id="s1",
+                name="write_file",
+                type="TOOL",
+                parent_id=None,
+                agent_id="wm_agent",
+                input={"file_path": "src/main/webapp/pages/calculator/calculator.variables.json"},
+                output=None,
+                success=True,
+            ),
+        ],
+    )
+
+    result = generate_contract(trace, workflow="javaservice_calculator")
+    data = _contract_dict(result.yaml_text)
+    contract = WorkflowContract.model_validate(data)
+
+    page = next(e for e in contract.resources.page if e.name == "calculator")
+    assert page.path == "src/main/webapp/pages/calculator/calculator.html"
+
+
 def test_generate_contract_populates_tools_required_from_spans_directly():
     # Regression: tools.required must not depend on snapshot.tools_summary
     # having been pre-populated by the trace normalizer -- a TraceSnapshot
