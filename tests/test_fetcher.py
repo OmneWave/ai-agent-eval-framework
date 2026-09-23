@@ -168,7 +168,7 @@ def test_search_trace_ids_by_metadata_passes_filter_json_through():
     mock_client = MagicMock()
     mock_client.api.trace.list.return_value = _fake_traces_response(["trace-1"])
 
-    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+    with patch("wm_agents_validator.trace.fetcher._scoped_client", return_value=mock_client):
         trace_ids = search_trace_ids_by_metadata(filters, limit=10, environment="stage-ai")
 
     assert trace_ids == ["trace-1"]
@@ -185,7 +185,7 @@ def test_search_trace_ids_by_metadata_stops_once_limit_reached():
         _fake_traces_response(["trace-3"]),
     ]
 
-    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+    with patch("wm_agents_validator.trace.fetcher._scoped_client", return_value=mock_client):
         trace_ids = search_trace_ids_by_metadata(filters, limit=2)
 
     assert trace_ids == ["trace-1", "trace-2"]
@@ -200,7 +200,7 @@ def test_search_trace_ids_by_metadata_paginates_when_first_page_short_of_limit()
         _fake_traces_response(["trace-last"]),
     ]
 
-    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+    with patch("wm_agents_validator.trace.fetcher._scoped_client", return_value=mock_client):
         trace_ids = search_trace_ids_by_metadata(filters, limit=OBSERVATION_PAGE_SIZE + 1)
 
     assert trace_ids[-1] == "trace-last"
@@ -216,7 +216,7 @@ def test_iter_trace_id_pages_yields_each_page_and_stops_on_short_page():
         _fake_traces_response(["c"]),
     ]
 
-    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+    with patch("wm_agents_validator.trace.fetcher._scoped_client", return_value=mock_client):
         pages = list(iter_trace_id_pages(page_size=2))
 
     assert pages == [["a", "b"], ["c"]]
@@ -227,7 +227,7 @@ def test_iter_trace_id_pages_stops_on_empty_page():
     mock_client = MagicMock()
     mock_client.api.trace.list.return_value = _fake_traces_response([])
 
-    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+    with patch("wm_agents_validator.trace.fetcher._scoped_client", return_value=mock_client):
         pages = list(iter_trace_id_pages(page_size=20))
 
     assert pages == []
@@ -237,7 +237,7 @@ def test_iter_trace_id_pages_respects_max_pages():
     mock_client = MagicMock()
     mock_client.api.trace.list.return_value = _fake_traces_response(["a", "b"])  # always full page
 
-    with patch("wm_agents_validator.trace.fetcher.get_client", return_value=mock_client):
+    with patch("wm_agents_validator.trace.fetcher._scoped_client", return_value=mock_client):
         pages = list(iter_trace_id_pages(page_size=2, max_pages=3))
 
     assert len(pages) == 3
