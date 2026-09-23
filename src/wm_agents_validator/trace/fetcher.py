@@ -8,12 +8,33 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from langfuse import get_client
+from langfuse import Langfuse
 
 from wm_agents_validator.models.raw_trace import RawTracePayload
 
 OBSERVATION_PAGE_SIZE = 100
 MAX_OBSERVATION_PAGES = 10
+
+
+def _scoped_client() -> Langfuse:
+    """Builds a Langfuse client explicitly scoped to the connection currently
+    set in the environment, instead of `langfuse.get_client()`'s bare-call
+    form. That form is a per-process singleton keyed by public_key: the
+    moment a second Langfuse project has ever been touched in this process
+    (a near-certainty in a multi-tenant caller evaluating several
+    connections from the same worker), an unkeyed `get_client()` call
+    silently returns a disabled, fake-credentialed client instead of raising
+    -- so every trace lookup after that point returns nothing, forever,
+    regardless of retries, host, or the actual data's presence. Constructing
+    a `Langfuse(...)` client directly here always talks to the project
+    these env vars name, independent of whatever other connections this
+    process has used before or since.
+    """
+    return Langfuse(
+        public_key=os.environ.get("LANGFUSE_PUBLIC_KEY"),
+        secret_key=os.environ.get("LANGFUSE_SECRET_KEY"),
+        host=os.environ.get("LANGFUSE_BASE_URL"),
+    )
 
 
 def _to_dict(obj: Any) -> Any:
@@ -171,7 +192,7 @@ def fetch_via_rest(trace_id: str) -> tuple[dict[str, Any] | None, list[dict[str,
 
 
 def fetch_via_sdk(trace_id: str) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    langfuse = get_client()
+    langfuse = _scoped_client()
     trace: dict[str, Any] | None = None
     observations: list[dict[str, Any]] = []
 
@@ -293,7 +314,7 @@ def search_trace_ids_by_metadata(
     ("Column input does not match a UI / CH table mapping.") but `metadata` is a
     real, working column -- see the contract-schema plan for the full trail.
     """
-    client = get_client()
+    client = _scoped_client()
     page_size = min(max(limit, 1), OBSERVATION_PAGE_SIZE)
     trace_ids: list[str] = []
     page = 1
@@ -335,7 +356,7 @@ def iter_trace_id_pages(
     safety cap, not a target) or as soon as a short page signals nothing's
     left.
     """
-    client = get_client()
+    client = _scoped_client()
     page = 1
     for _ in range(max_pages):
         response = client.api.trace.list(limit=page_size, page=page, environment=environment)
