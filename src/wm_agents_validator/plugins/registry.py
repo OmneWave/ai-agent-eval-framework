@@ -20,11 +20,19 @@ DEFAULT_PLUGINS = [
 # `resource_usage` is deliberately absent -- it runs (via DEFAULT_PLUGINS) and
 # populates evidence but never affects `overall_score`, since it's purely
 # observational (see the Scoring section of the contract schema).
+#
+# Weighted by how strong a signal each is of actual task success: `output` is
+# the deliverable itself (did the right files/resources actually get
+# created/updated), so it leads; `skills_loaded` is a strong proxy for correct
+# approach; `tool_calls` is a more mechanical check (right tools used, nothing
+# forbidden/unrelated); `input_context` is the weakest signal of final
+# correctness (an agent can under/over-read context and still land the right
+# output), so it gets the smallest share.
 PLUGIN_WEIGHTS: dict[str, float] = {
+    "output": 0.4,
     "skills_loaded": 0.25,
-    "tool_calls": 0.25,
-    "input_context": 0.25,
-    "output": 0.25,
+    "tool_calls": 0.2,
+    "input_context": 0.15,
 }
 
 _PLUGIN_CLASSES: dict[str, type] = {
