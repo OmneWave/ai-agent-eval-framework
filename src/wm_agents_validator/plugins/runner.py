@@ -4,6 +4,7 @@ from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, 
 from wm_agents_validator.models.trace_snapshot import TraceSnapshot
 from wm_agents_validator.models.verification import VerificationReport
 from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.plugins.excludes import EXCLUDING_PLUGINS, drop_excluded_spans
 from wm_agents_validator.plugins.registry import DEFAULT_PLUGINS, PLUGIN_WEIGHTS, get_plugin
 
 
@@ -15,11 +16,12 @@ def run_plugins(
 ) -> VerificationReport:
     plugin_names = plugins or DEFAULT_PLUGINS
     ctx = context or EvalContext()
+    scoped_snapshot = drop_excluded_spans(snapshot)
     results: list[PluginResult] = []
 
     for name in plugin_names:
         plugin = get_plugin(name)
-        results.append(plugin.evaluate(snapshot, contract, ctx))
+        results.append(plugin.evaluate(scoped_snapshot if name in EXCLUDING_PLUGINS else snapshot, contract, ctx))
 
     # SWE-bench-style binary resolution: any plugin failing fails the run. `overall_score`
     # (weighted average of plugin scores) is diagnostic only -- see the Scoring section of
