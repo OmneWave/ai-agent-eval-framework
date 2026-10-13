@@ -264,3 +264,31 @@ def test_generate_contract_populates_tools_required_from_spans_directly():
     data = _contract_dict(result.yaml_text)
 
     assert set(data["tools"]["required"]) == {"write_file", "execute_tool", "platform_addLocale"}
+
+
+def test_generate_contract_puts_read_markdown_files_under_knowledge():
+    def read(span_id, paths, success=True):
+        return SpanRecord(
+            id=span_id, name="read_files", type="TOOL", parent_id=None, agent_id="a",
+            input={"paths": paths}, output=None, success=success,
+        )
+
+    trace = TraceSnapshot(
+        trace_id="t7",
+        entry_agent="wm_agent",
+        status="success",
+        skill_loads=[],
+        spans=[
+            read("s1", ["/catalog/components/wm-table/wm-table.md", "src/main/webapp/pages/PetTable/PetTable.html"]),
+            read("s2", ["/catalog/components/wm-table/wm-table.md", "/notes/plan.md"]),
+            read("s3", ["/catalog/missing.md"], success=False),
+        ],
+    )
+
+    result = generate_contract(trace, workflow="ui_to_api_binding")
+    contract = WorkflowContract.model_validate(_contract_dict(result.yaml_text))
+
+    assert contract.knowledge == ["/catalog/components/wm-table/wm-table.md"]
+    assert [e.resource for e in contract.input_context] == ["page.PetTable"]
+    assert not any(".md" in w for w in result.warnings)
+

@@ -19,6 +19,7 @@ from wm_agents_validator.models.trace_snapshot import (
     unwrap_execute_tool,
 )
 from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.plugins.excludes import is_excluded_path
 
 _OP_PRIORITY = ("delete", "write", "edit")  # first match wins -- delete is most decisive
 
@@ -396,10 +397,19 @@ class WaveMakerContractGenerator(ContractGenerator):
         input_entries: list[str] = []
         seen_input_refs: set[str] = set()
         unclassified_reads: list[str] = []
+        knowledge: list[str] = []
         for span in snapshot.spans:
             if span.type != "TOOL" or _span_base_name(span.name) != "read_files":
                 continue
             for path in extract_paths_from_input(span.input or {}, "read_files"):
+                if path.lower().endswith(".md"):
+                    # Docs/catalog/skill markdown pulled in for guidance -- not a project
+                    # resource, so it goes under `knowledge` (exempt from the unrelated-reads
+                    # check) rather than `input_context`. Failed reads and agent scratch
+                    # notes are never declared.
+                    if span.success is not False and not is_excluded_path(path) and path not in knowledge:
+                        knowledge.append(path)
+                    continue
                 draft = self._classify_path(path, prefer_javaservice=prefer_javaservice)
                 if draft is None:
                     if path not in unclassified_reads:
@@ -439,6 +449,7 @@ class WaveMakerContractGenerator(ContractGenerator):
             workflow=workflow,
             contract_version=contract_version,
             skills=skills,
+            knowledge=knowledge,
             pages=pages,
             design_tokens=design_tokens,
             apis=apis,
@@ -460,6 +471,7 @@ def _render_yaml(
     workflow: str,
     contract_version: str,
     skills: list[str],
+    knowledge: list[str],
     pages: dict[str, _PageDraft],
     design_tokens: dict[str, str],
     apis: dict[str, str],
@@ -477,7 +489,7 @@ def _render_yaml(
     lines.extend(_list_block("required", skills))
     lines.extend(_list_block("optional", []))
     lines.append("")
-    lines.append("knowledge: []")
+    lines.extend(_list_block("knowledge", knowledge, indent=""))
     lines.append("")
     lines.append("resources:")
     has_resources = bool(pages or design_tokens or apis or javaservices or dbs)
