@@ -56,3 +56,25 @@ def test_trace_health_still_sees_failed_notes_call(snapshot, contract):
     baseline = next(r for r in run_plugins(snapshot, contract).plugin_results if r.plugin == "trace_health")
 
     assert len(health.violations) > len(baseline.violations) or health.score < baseline.score
+
+
+def test_spawn_and_fork_stay_in_trace_but_are_not_scored(snapshot, contract):
+    spawn = _span("s1", "spawn", {"agent": "x"})
+    fork = _span("s2", "fork", {"agent": "y"})
+    trace = snapshot.model_copy(
+        update={
+            "spans": [*snapshot.spans, spawn, fork],
+            "tools_summary": snapshot.tools_summary.model_copy(
+                update={"called": [*snapshot.tools_summary.called, "spawn", "fork"]}
+            ),
+        }
+    )
+
+    report = run_plugins(trace, contract)
+    tool_calls = next(r for r in report.plugin_results if r.plugin == "tool_calls")
+
+    assert {"spawn", "fork"} <= set(trace.tool_names)
+    assert {s.name for s in trace.spans} >= {"spawn", "fork"}
+    assert tool_calls.evidence["unrelated_tools"] == []
+    assert not any("spawn" in str(v.evidence) or "fork" in str(v.evidence) for v in tool_calls.violations)
+    assert tool_calls.evidence["unscored_tools"] == ["spawn", "fork"]

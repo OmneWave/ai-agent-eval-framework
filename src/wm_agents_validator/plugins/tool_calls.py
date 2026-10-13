@@ -3,6 +3,7 @@ from __future__ import annotations
 from wm_agents_validator.models.plugin_result import EvalContext, PluginResult, Violation, score_from_checks
 from wm_agents_validator.models.trace_snapshot import DELEGATION_TOOL_NAMES, SKILL_TOOL, TraceSnapshot
 from wm_agents_validator.models.workflow_contract import WorkflowContract
+from wm_agents_validator.plugins.excludes import WAVEMAKER_EXCLUDED_TOOLS
 from wm_agents_validator.plugins.timing import fmt_ms, sum_duration_ms
 
 # Framework/orchestration mechanics, not domain tool calls -- skill loading is
@@ -10,7 +11,7 @@ from wm_agents_validator.plugins.timing import fmt_ms, sum_duration_ms
 # domain-tool identity of their own. No existing contract declares these in
 # `tools:`, so they're excluded from the "unrelated tools" check entirely
 # rather than requiring every contract to enumerate them.
-_STRUCTURAL_TOOLS = DELEGATION_TOOL_NAMES | {SKILL_TOOL}
+_STRUCTURAL_TOOLS = DELEGATION_TOOL_NAMES | {SKILL_TOOL} | WAVEMAKER_EXCLUDED_TOOLS
 
 
 class ToolCallsPlugin:
@@ -145,5 +146,6 @@ class ToolCallsPlugin:
                 "checks": checks,
                 "unrelated_tools": unrelated_tools,
                 "declared_tools": sorted(declared_tools),
+                "unscored_tools": [t for t in snapshot.tool_names if t in WAVEMAKER_EXCLUDED_TOOLS],
             },
         )
