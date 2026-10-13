@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Agent scratch files exempt from the scope-creep checks.
+"""Agent scratch files and sub-agent orchestration tools exempt from scoring.
 
 The agent may create or read these at its own discretion depending on the use
 case, so touching them is never a contract violation. ``run_plugins`` hands the
@@ -18,6 +18,11 @@ from wm_agents_validator.models.trace_snapshot import (
 )
 
 EXCLUDING_PLUGINS: frozenset[str] = frozenset({"input_context", "output"})
+
+# WaveMaker agent tools that spawn/fork sub-agents: orchestration plumbing, not
+# task work. They stay in the trace (and in reports) but never count toward --
+# or against -- a plugin's scoring; see ``ToolCallsPlugin``.
+WAVEMAKER_EXCLUDED_TOOLS: frozenset[str] = frozenset({"spawn", "fork"})
 
 # Directory names (matched as a whole path segment, at any depth) whose files
 # are agent scratch space, e.g. ``/notes/plan.md``.
