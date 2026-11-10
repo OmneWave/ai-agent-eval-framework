@@ -1,5 +1,7 @@
 # Cross-Model Benchmarking with the Evaluation Engine
 
+> **Tracing tool:** this framework reads traces from a tracing tool. Langfuse is the currently supported backend, so the `LANGFUSE_*` variables and `--langfuse-*` flags below keep that name.
+
 ## Overview
 
 This framework is a deterministic evaluation system for agent runs. It takes a trace from an LLM-driven workflow, evaluates it against a contract defined for a specific use case, and produces a score along with detailed pass/fail evidence. Instead of relying on an LLM judge or a manually curated golden dataset, it uses structured rules and plugin-based checks to judge whether a run satisfies the expected behavior.
@@ -23,7 +25,7 @@ The evaluation engine works in four stages:
 
 4. Aggregated reporting
    - The framework combines plugin outputs into an overall score.
-   - It also produces a verification report showing which checks passed, failed, and why.
+   - It also produces a verification report showing which assertions passed, failed, and why.
 
 ## Why this is useful
 
@@ -34,7 +36,7 @@ This framework helps Any AI Agent Harness to identify the most suitable model fo
 This framework is suitable for cross-model benchmarking because it provides:
 
 - consistent evaluation criteria
-- contract-driven checks for each use case
+- contract-driven graders for each use case
 - score breakdowns by plugin
 - evidence-backed results rather than subjective opinions
 - repeatability across many runs
@@ -65,9 +67,9 @@ cd wm_agents_validator
 uv sync --extra dev
 ```
 
-Langfuse credentials are optional at setup time — pass them when you run a command (see below).
+Tracing tool credentials are optional at setup time — pass them when you run a command (see below).
 
-## Langfuse credentials
+## Tracing tool credentials
 
 Priority (highest wins): **CLI flags** → **shell env vars** → **`.env.local` / `.env`**
 
@@ -100,7 +102,7 @@ cp .env.example .env
 ### Optional: `LANGFUSE_ENVIRONMENT`
 
 Filters every trace lookup (both `--from`/`--to` and `--filter` modes in `compare-traces`) to a
-specific Langfuse `environment` tag. Defaults to `default` if not set. Same priority order as the
+specific tracing tool `environment` tag. Defaults to `default` if not set. Same priority order as the
 credentials above — `--langfuse-environment` flag, then `LANGFUSE_ENVIRONMENT` env var, then the
 default.
 
@@ -120,7 +122,7 @@ uv run run-verify \
   --trace-id c4739a2868e2b7aca6430aeae2f7ea0a
 ```
 
-With Langfuse keys inline:
+With tracing tool keys inline:
 
 ```bash
 LANGFUSE_SECRET_KEY=sk-... \
@@ -138,7 +140,7 @@ Fetch a trace only:
 uv run fetch-trace --trace-id c4739a2868e2b7aca6430aeae2f7ea0a
 ```
 
-Debug Langfuse API / fetch issues (probe each endpoint step by step):
+Debug tracing tool API / fetch issues (probe each endpoint step by step):
 
 ```bash
 LANGFUSE_SECRET_KEY=sk-... \
@@ -163,7 +165,7 @@ uv run fetch-trace --thread-id "proj:session" --run-id run-abc123
 Other options:
 
 ```bash
-# Run specific plugins (no Langfuse fetch — use snapshot file)
+# Run specific plugins (no tracing tool fetch — use snapshot file)
 uv run run-verify \
   --contract contracts/binding/binding_with_widget.yaml \
   --snapshot tests/fixtures/trace_snapshot.json \
@@ -319,9 +321,9 @@ Every plugin reports a full pass/fail breakdown of the named things it evaluated
 
 ### Scoring
 
-Modeled on SWE-bench-style binary resolution, not partial credit: **every declared check in a
+Modeled on SWE-bench-style binary resolution, not partial credit: **every declared assertion in a
 plugin must pass for that plugin's `passed=True`** — no hard/soft split, no violation that "just
-dilutes the score." `score` is still computed (the pass ratio over that plugin's checks) but is
+dilutes the score." `score` is still computed (the pass ratio over that plugin's assertions) but is
 diagnostic detail only, never what decides `passed` and never what should be used to rank/compare
 models. A run's overall `passed` is `all(plugin.passed for plugin in results)` — one failing
 plugin fails the run, same as any required test failing fails a SWE-bench instance.
@@ -373,7 +375,7 @@ uv run compare-traces \
 ```
 
 **4. A metadata filter** (single contract only, no time range needed) — matches traces whose
-`metadata` has an exact key=value match, server-side via Langfuse's own filter query (not a
+`metadata` has an exact key=value match, server-side via the tracing tool's own filter query (not a
 client-side scan). Repeat `--filter` with a *different* key to AND another condition; repeat it
 with the *same* key to OR across multiple values instead (e.g. match either of two project ids):
 
@@ -411,7 +413,7 @@ trace ids) — mixing a bare/id-embedded contract in with filter-embedded ones i
 than silently guessed at. Multiple `key=value` pairs on one contract (`path:k1=v1,k2=v2`) still AND
 together for that contract.
 
-Note: Langfuse's trace-list API has no server-side way to filter by a trace's raw `input`/`output`
+Note: The tracing tool's trace-list API has no server-side way to filter by a trace's raw `input`/`output`
 content (confirmed directly against a live instance — `column: "input"` is rejected with
 `"Column input does not match a UI / CH table mapping."`) — only structured columns like
 `metadata`, `name`, `environment`, `tags`, `userId`, `sessionId` are filterable. `--filter` targets
@@ -446,7 +448,7 @@ uv run compare-traces \
 
 This is heavier than the other modes since it fetches+normalizes every candidate it scans (not
 just ones that end up matching) to inspect their content — there's no way to avoid that given
-Langfuse has no server-side filter for `input`/skill names (see above). It's still cheaper than
+The tracing tool has no server-side filter for `input`/skill names (see above). It's still cheaper than
 combining `--from`/`--to` with `--user-prompt-contains`, since that combo runs full contract
 verification on every candidate in the batch, not just a lightweight fetch+normalize.
 
@@ -454,9 +456,9 @@ Other flags:
 
 - `--model <name>` — only include rows whose captured `model_name` matches (client-side filter, applied after evaluation, since model is only known once a trace is normalized).
 - `--user-prompt-contains <text>` — only include rows whose `user_prompt` contains this text (case-insensitive substring, client-side, applied after evaluation — combinable with any trace-selection mode above, including `--filter`; used alone with no other selection mode, triggers content search mode above instead).
-- `--skill-name-contains <text>` — only include rows where any loaded skill name contains this text (case-insensitive substring, client-side — `skill_names` is derived during normalization from `load_skill` tool-call spans, not a native Langfuse column, so same story as `user_prompt`).
+- `--skill-name-contains <text>` — only include rows where any loaded skill name contains this text (case-insensitive substring, client-side — `skill_names` is derived during normalization from `load_skill` tool-call spans, not a native tracing-tool column, so same story as `user_prompt`).
 - `--limit <n>` — max candidate traces to pull in time-range/`--filter` mode, or max **matching** traces to find in content-search mode (default: 50).
-- `--user-id-key <key>` — which `TraceSnapshot.metadata` key holds the user id to show/group by in the report (default: `user_id`). Langfuse's native `userId` field is captured under this key automatically as a fallback; pass a different key if your traces stash the identifier elsewhere in trace metadata.
+- `--user-id-key <key>` — which `TraceSnapshot.metadata` key holds the user id to show/group by in the report (default: `user_id`). The tracing tool's native `userId` field is captured under this key automatically as a fallback; pass a different key if your traces stash the identifier elsewhere in trace metadata.
 
 A trace that fails to fetch or verify doesn't abort the whole batch — it shows up in the report as an errored row with the failure reason, and every other trace still gets compared.
 
@@ -482,7 +484,7 @@ The feature is split into small, single-purpose, swappable pieces so new discove
 
 - `comparison/sources.py` — `TraceSource` protocol + `ExplicitTraceIdSource` / `TimeRangeTraceSource` (how trace IDs are discovered).
 - `comparison/aggregator.py` — pure functions turning per-trace verification outcomes into a `ComparisonReport` (`build_comparison_report`) and combining several reports from different contracts into one (`merge_reports`) — no I/O.
-- `comparison/pipeline.py` — `ComparisonPipeline` orchestrates source → evaluate → aggregate → filter for *one* contract, depending only on the `TraceSource` protocol and an injectable evaluator (so it's fully unit-testable without hitting Langfuse). The CLI runs one pipeline per `--contract` and merges the results.
+- `comparison/pipeline.py` — `ComparisonPipeline` orchestrates source → evaluate → aggregate → filter for *one* contract, depending only on the `TraceSource` protocol and an injectable evaluator (so it's fully unit-testable without hitting the tracing tool). The CLI runs one pipeline per `--contract` and merges the results.
 - `report/html_comparison_renderer.py` — `ComparisonReportRenderer` protocol + `HtmlComparisonRenderer`, the only place that knows about HTML/CSS/JS (including the heatmap).
 - `models/comparison.py` — `ComparisonReport` / `ComparisonRow`, the shared data contract every renderer consumes.
 
